@@ -1,5 +1,12 @@
 # Shredder - Secure File Deletion for Android
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
+[![Min SDK](https://img.shields.io/badge/Min%20SDK-24%20(Android%207.0)-blue.svg)](https://developer.android.com/studio/releases/platforms)
+[![Target SDK](https://img.shields.io/badge/Target%20SDK-36-blue.svg)](https://developer.android.com/studio/releases/platforms)
+[![Language](https://img.shields.io/badge/Language-Kotlin-blueviolet.svg)](https://kotlinlang.org)
+[![UI](https://img.shields.io/badge/UI-Jetpack%20Compose-orange.svg)](https://developer.android.com/jetpack/compose)
+
 Shredder is a high-security Android application designed to permanently and irrecoverably delete files and directories. It implements industry-standard multi-pass shredding algorithms to thwart data recovery even from specialized hardware forensic tools.
 
 ## 🚀 Key Features
