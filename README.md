@@ -1,5 +1,6 @@
 # Shredder - Secure File Deletion for Android
 
+[![Version](https://img.shields.io/badge/Version-1.1-blue.svg)](https://github.com/viruchith/shredder/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
 [![Min SDK](https://img.shields.io/badge/Min%20SDK-24%20(Android%207.0)-blue.svg)](https://developer.android.com/studio/releases/platforms)
@@ -16,8 +17,9 @@ Shredder is a high-security Android application designed to permanently and irre
 -   **Free Space Wiper**: Securely wipes available free space on the device storage to prevent recovery of previously deleted files.
 -   **Nuclear Option**: Integrated device administrator capability to trigger a secure factory reset (wiping all data).
 -   **Foreground Execution**: Uses Android Foreground Services to ensure long-running shredding tasks complete successfully even if the app is in the background.
--   **Biometric Security**: Protects high-risk operations (like the Nuclear Option) with Biometric authentication.
--   **Modern UI**: Built entirely with Jetpack Compose for a responsive, fluid user experience.
+-   **Biometric Security**: Protects the entire application and high-risk operations (like the Nuclear Option) with Biometric/PIN authentication.
+-   **Notification Support**: Fully compatible with Android 13+ notification permissions for reliable foreground execution.
+-   **Modern UI**: Built entirely with Jetpack Compose for a responsive, fluid user experience, featuring a collapsible real-time console.
 
 ## 🛠 Technical Implementation
 
@@ -45,6 +47,7 @@ Shredding is an I/O intensive and potentially long-running operation. To prevent
 
 -   **`MANAGE_EXTERNAL_STORAGE`**: Utilizes the Scoped Storage "All Files Access" permission (on Android 11+) to allow deep shredding across the entire user-accessible storage.
 -   **Device Administration**: Registered as a Device Admin to enable the `wipeData()` system call for the "Nuclear Option".
+-   **`POST_NOTIFICATIONS`**: Required on Android 13+ to show the foreground service notification, ensuring the shredding process is not interrupted.
 -   **No Backups**: `android:allowBackup="false"` is set in the Manifest to prevent sensitive app states from being cached in cloud backups.
 
 ## 🏗 Build Requirements
@@ -60,6 +63,13 @@ The application is configured for production with:
 -   **R8/ProGuard**: Enabled for code shrinking and obfuscation.
 -   **Resource Shrinking**: Enabled to minimize APK footprint.
 -   **Log Sanitization**: Verbose and debug logging is disabled in the core engine to prevent metadata leakage in `logcat`.
+
+## 🆕 What's New (v1.1)
+
+-   **App-wide Lock**: Added biometric authentication barrier on application start.
+-   **Refactored Architecture**: Optimized `MainActivity` for better performance and maintainability using decomposed composables and state-driven UI.
+-   **Kotlin Intrinsics**: Migrated core math operations to `kotlin.math` for improved platform integration.
+-   **Bug Fixes**: Resolved resource linking issues and optimized file listing logic.
 
 ---
 *Disclaimer: Data deleted with Shredder is IRREVERSIBLE. Use with caution.*

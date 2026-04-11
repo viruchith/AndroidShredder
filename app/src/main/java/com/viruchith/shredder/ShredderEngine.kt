@@ -1,11 +1,12 @@
 package com.viruchith.shredder
 
-import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 import java.io.RandomAccessFile
 import java.security.SecureRandom
 import java.util.Locale
+import kotlin.math.log10
+import kotlin.math.pow
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -280,7 +281,7 @@ object ShredderEngine {
     private fun formatSize(size: Long): String {
         if (size <= 0) return "0 B"
         val units = arrayOf("B", "KB", "MB", "GB", "TB")
-        val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
-        return String.format(Locale.getDefault(), "%.1f %s", size / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
+        val digitGroups = (log10(size.toDouble()) / log10(1024.0)).toInt()
+        return String.format(Locale.getDefault(), "%.1f %s", size / 1024.0.pow(digitGroups.toDouble()), units[digitGroups])
     }
 }
