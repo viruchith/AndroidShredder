@@ -5,8 +5,6 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -16,8 +14,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -39,6 +35,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -46,9 +43,11 @@ import androidx.compose.material.icons.filled.Dangerous
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -82,6 +81,11 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.fragment.app.FragmentActivity
+import com.viruchith.shredder.browser.FileBrowserModel
+import com.viruchith.shredder.browser.FileSelectionLogic
+import com.viruchith.shredder.destructive.DestructiveOrchestrator
+import com.viruchith.shredder.permissions.PermissionOrchestrator
+import com.viruchith.shredder.security.SecurityGating
 import com.viruchith.shredder.ui.theme.ShredderTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -105,6 +109,9 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Load the stored configuration on startup
+        ShredderEngine.init(applicationContext)
+
         // Enable edge-to-edge to utilize the full screen height behind status and navigation bars.
         enableEdgeToEdge()
         setContent {
@@ -117,10 +124,35 @@ class MainActivity : FragmentActivity() {
     @Composable
     fun MainScreen() {
         val context = LocalContext.current
+        val securityGating = remember { SecurityGating() }
+
+        // Enforce strong device lock screen security posture.
+        var isDeviceSecure by remember { mutableStateOf(securityGating.isDeviceSecure(context)) }
+
+        if (!isDeviceSecure) {
+            UnsecuredDeviceScreen(onRetry = {
+                isDeviceSecure = securityGating.isDeviceSecure(context)
+            })
+            return
+        }
+
         var isAuthenticated by remember { mutableStateOf(false) }
 
         if (!isAuthenticated) {
-            AuthenticationBarrier(context) { isAuthenticated = true }
+            AuthenticationBarrier(context, securityGating) { isAuthenticated = true }
+            return
+        }
+
+        var showSettingsScreen by remember { mutableStateOf(false) }
+        var showAboutScreen by remember { mutableStateOf(false) }
+
+        if (showSettingsScreen) {
+            SettingsScreen(onBack = { showSettingsScreen = false })
+            return
+        }
+
+        if (showAboutScreen) {
+            AboutScreen(onBack = { showAboutScreen = false })
             return
         }
 
@@ -133,6 +165,7 @@ class MainActivity : FragmentActivity() {
 
         // Collect flows from the ShredderEngine for reactive UI updates.
         val progress by ShredderEngine.progressFlow.collectAsState()
+        val currentPass by ShredderEngine.currentPassFlow.collectAsState()
         val consoleLogs by ShredderEngine.consoleLogFlow.collectAsState()
         val refreshTrigger by ShredderEngine.refreshTrigger.collectAsState()
 
@@ -143,26 +176,26 @@ class MainActivity : FragmentActivity() {
             fileListKey++
         }
 
-        // Permission handling for MANAGE_EXTERNAL_STORAGE and POST_NOTIFICATIONS.
-        val hasPermission = checkStoragePermission(context)
-        val hasNotificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-        } else true
-        
-        var permissionGranted by remember { mutableStateOf(hasPermission && hasNotificationPermission) }
+        // Permission handling orchestrator.
+        val orchestrator = remember { PermissionOrchestrator(context) }
+        var permissionGranted by remember { mutableStateOf(orchestrator.hasAllPermissions()) }
 
         val storagePermissionLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.StartActivityForResult()
         ) {
-            permissionGranted = checkStoragePermission(context) && (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-            } else true)
+            permissionGranted = orchestrator.hasAllPermissions()
         }
 
         val notificationPermissionLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) {
-            permissionGranted = checkStoragePermission(context) && it
+            permissionGranted = orchestrator.hasAllPermissions()
+        }
+
+        val legacyStoragePermissionLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { _ ->
+            permissionGranted = orchestrator.hasAllPermissions()
         }
 
         val deviceAdminLauncher = rememberLauncherForActivityResult(
@@ -182,27 +215,32 @@ class MainActivity : FragmentActivity() {
                     sortOrder = sortOrder,
                     fileListKey = fileListKey,
                     deviceAdminLauncher = deviceAdminLauncher,
+                    securityGating = securityGating,
                     onNavigate = { currentDir = it },
                     onSearchQueryChange = { searchQuery = it },
                     onSortTypeChange = { sortType = it },
-                    onSortOrderChange = { sortOrder = it }
+                    onSortOrderChange = { sortOrder = it },
+                    onAboutClick = { showAboutScreen = true },
+                    onSettingsClick = { showSettingsScreen = true }
                 )
             },
             bottomBar = {
                 // Collapsible console view for progress tracking.
-                ConsoleView(consoleLogs, progress)
+                ConsoleView(consoleLogs, progress, currentPass)
             }
         ) { innerPadding ->
             if (!permissionGranted) {
                 // UI to guide user to grant necessary storage permissions.
                 PermissionRequestScreen(innerPadding) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        !orchestrator.hasNotificationPermission()) {
                         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                         val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
                         intent.data = "package:${context.packageName}".toUri()
                         storagePermissionLauncher.launch(intent)
+                    } else {
+                        legacyStoragePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     }
                 }
             } else {
@@ -218,8 +256,9 @@ class MainActivity : FragmentActivity() {
                         sortOrder = sortOrder,
                         onDirClick = { currentDir = it },
                         onFileToggle = { file ->
-                            if (selectedFiles.contains(file)) selectedFiles.remove(file)
-                            else selectedFiles.add(file)
+                            val updated = FileSelectionLogic.toggleSelection(selectedFiles, file)
+                            selectedFiles.clear()
+                            selectedFiles.addAll(updated)
                         }
                     )
                 )
@@ -228,12 +267,79 @@ class MainActivity : FragmentActivity() {
     }
 
     @Composable
-    private fun AuthenticationBarrier(context: Context, onSucceeded: () -> Unit) {
+    private fun AuthenticationBarrier(
+        context: Context,
+        securityGating: SecurityGating,
+        onSucceeded: () -> Unit
+    ) {
         LaunchedEffect(Unit) {
-            authenticateUser(context, onSucceeded)
+            securityGating.authenticate(
+                activity = context as FragmentActivity,
+                title = "Shredder Lock",
+                subtitle = "Authenticate to access your secure files",
+                onSuccess = onSucceeded,
+                onError = { errorCode, errString ->
+                    if (errorCode == androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED ||
+                        errorCode == androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                        finish() // Close app if authentication is cancelled
+                    } else {
+                        Toast.makeText(context, "Authentication error: $errString", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
         }
         // Show a blank screen or a splash while authenticating
         Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
+    }
+
+    @Composable
+    private fun UnsecuredDeviceScreen(onRetry: () -> Unit) {
+        val context = LocalContext.current
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Dangerous,
+                    contentDescription = "Unsecured Device",
+                    tint = Color.Red,
+                    modifier = Modifier.size(64.dp)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Security Lock Required",
+                    fontSize = 22.sp,
+                    color = Color.Red,
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "For your security, Secure Shredder requires a lock screen (PIN, Pattern, Password, or Biometrics) to safeguard your files. Please configure device lock security in your system settings.",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+                Button(onClick = {
+                    val intent = Intent(Settings.ACTION_SECURITY_SETTINGS)
+                    context.startActivity(intent)
+                }) {
+                    Text("Open Device Settings")
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                TextButton(onClick = onRetry) {
+                    Text("Retry Check")
+                }
+            }
+        }
     }
 
     @Composable
@@ -246,10 +352,13 @@ class MainActivity : FragmentActivity() {
         sortOrder: SortOrder,
         fileListKey: Int,
         deviceAdminLauncher: androidx.activity.result.ActivityResultLauncher<Intent>,
+        securityGating: SecurityGating,
         onNavigate: (File) -> Unit,
         onSearchQueryChange: (String) -> Unit,
         onSortTypeChange: (SortType) -> Unit,
-        onSortOrderChange: (SortOrder) -> Unit
+        onSortOrderChange: (SortOrder) -> Unit,
+        onAboutClick: () -> Unit,
+        onSettingsClick: () -> Unit
     ) {
         Column {
             TopAppBar(
@@ -268,8 +377,14 @@ class MainActivity : FragmentActivity() {
                         ShredAction(context, selectedFiles)
                     }
 
-                    IconButton(onClick = { showNuclearDialog(context) }) {
-                        Icon(Icons.Default.Dangerous, contentDescription = "Nuclear Option", tint = Color.Red)
+                    NuclearAction(context, securityGating)
+
+                    IconButton(onClick = onAboutClick) {
+                        Icon(Icons.Default.Info, contentDescription = "About")
+                    }
+
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 }
             )
@@ -293,9 +408,46 @@ class MainActivity : FragmentActivity() {
     @Composable
     private fun ShredAction(context: Context, selectedFiles: MutableList<File>) {
         var showConfirmDialog by remember { mutableStateOf(false) }
+        var showHighRiskWarningDialog by remember { mutableStateOf(false) }
 
-        IconButton(onClick = { showConfirmDialog = true }) {
+        IconButton(onClick = {
+            if (DestructiveOrchestrator.hasHighRiskPaths(selectedFiles)) {
+                showHighRiskWarningDialog = true
+            } else {
+                showConfirmDialog = true
+            }
+        }) {
             Icon(Icons.Default.DeleteForever, contentDescription = "Shred", tint = Color.Red)
+        }
+
+        if (showHighRiskWarningDialog) {
+            AlertDialog(
+                onDismissRequest = { showHighRiskWarningDialog = false },
+                title = { Text("High-Risk Paths Selected") },
+                text = {
+                    Text("The current selection includes system-critical directories or the root folder of your external storage.\n\nTo safeguard your device against accidental OS bricking or severe storage corruption, Secure Shredder automatically filters out these locations from standard shredding.")
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showHighRiskWarningDialog = false
+                        val safeFiles = DestructiveOrchestrator.filterSafelyShreddable(selectedFiles)
+                        selectedFiles.clear()
+                        selectedFiles.addAll(safeFiles)
+                        if (selectedFiles.isNotEmpty()) {
+                            showConfirmDialog = true
+                        } else {
+                            Toast.makeText(context, "No safely shreddable files remaining.", Toast.LENGTH_LONG).show()
+                        }
+                    }) {
+                        Text("FILTER & PROCEED", color = Color.Red)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showHighRiskWarningDialog = false }) {
+                        Text("CANCEL")
+                    }
+                }
+            )
         }
 
         if (showConfirmDialog) {
@@ -305,7 +457,7 @@ class MainActivity : FragmentActivity() {
                 text = {
                     val totalSize = ShredderEngine.calculateTotalSize(selectedFiles)
                     val fileCount = ShredderEngine.countFiles(selectedFiles)
-                    Text("Are you sure you want to securely shred $fileCount items (${formatSize(totalSize)})? This action is IRREVERSIBLE.")
+                    Text("Are you sure you want to securely shred $fileCount items (${formatSize(totalSize)}) using the ${ShredderEngine.currentAlgorithm.name} algorithm? This action is IRREVERSIBLE.")
                 },
                 confirmButton = {
                     TextButton(onClick = {
@@ -321,6 +473,77 @@ class MainActivity : FragmentActivity() {
                 },
                 dismissButton = {
                     TextButton(onClick = { showConfirmDialog = false }) {
+                        Text("CANCEL")
+                    }
+                }
+            )
+        }
+    }
+
+    @Composable
+    private fun NuclearAction(context: Context, securityGating: SecurityGating) {
+        var showNuclearDialog by remember { mutableStateOf(false) }
+        var verificationText by remember { mutableStateOf("") }
+        val requiredVerification = "NUCLEAR WIPE"
+
+        IconButton(onClick = { showNuclearDialog = true }) {
+            Icon(Icons.Default.Dangerous, contentDescription = "Nuclear Option", tint = Color.Red)
+        }
+
+        if (showNuclearDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showNuclearDialog = false
+                    verificationText = ""
+                },
+                title = { Text("WARNING: NUCLEAR OPTION", color = Color.Red) },
+                text = {
+                    Column {
+                        Text(
+                            "This action will perform a secure overwrite of all free space, wipe all user storage, and execute a full FACTORY RESET.\n\nAll photos, files, and accounts will be permanently destroyed. This is IRREVERSIBLE.\n\nTo proceed, please type \"$requiredVerification\" below:",
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        TextField(
+                            value = verificationText,
+                            onValueChange = { verificationText = it },
+                            placeholder = { Text("Type phrase here") },
+                            singleLine = true,
+                            isError = verificationText.isNotEmpty() && verificationText != requiredVerification,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showNuclearDialog = false
+                            verificationText = ""
+                            securityGating.authenticate(
+                                activity = context as FragmentActivity,
+                                title = "Nuclear Option Authorization",
+                                subtitle = "Authenticate to execute a total wipe and factory reset.",
+                                onSuccess = {
+                                    val intent = Intent(context, ShredderService::class.java).apply {
+                                        putExtra("fullWipe", true)
+                                    }
+                                    ContextCompat.startForegroundService(context, intent)
+                                },
+                                onError = { _, errString ->
+                                    Toast.makeText(context, "Authentication failed: $errString", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        },
+                        enabled = verificationText == requiredVerification
+                    ) {
+                        Text("INITIATE WIPE", color = Color.Red)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showNuclearDialog = false
+                        verificationText = ""
+                    }) {
                         Text("CANCEL")
                     }
                 }
@@ -351,22 +574,23 @@ class MainActivity : FragmentActivity() {
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val currentFiles = remember(currentDir, searchQuery, fileListKey) {
-                    var list = currentDir.listFiles()?.toList() ?: emptyList()
-                    if (searchQuery.isNotEmpty()) {
-                        list = list.filter { it.name.contains(searchQuery, ignoreCase = true) }
-                    }
-                    list
+                    val list = FileBrowserModel.listDirContent(currentDir)
+                    FileBrowserModel.processFiles(list, searchQuery, sortType, sortOrder)
                 }
-                val allSelected = currentFiles.isNotEmpty() && currentFiles.all { selectedFiles.contains(it) }
+                val allSelected = FileSelectionLogic.isAllSelected(selectedFiles, currentFiles)
 
                 Text("All", fontSize = 12.sp)
                 Checkbox(
                     checked = allSelected,
                     onCheckedChange = { checked ->
                         if (checked) {
-                            currentFiles.forEach { if (!selectedFiles.contains(it)) selectedFiles.add(it) }
+                            val updated = FileSelectionLogic.selectAll(selectedFiles, currentFiles)
+                            selectedFiles.clear()
+                            selectedFiles.addAll(updated)
                         } else {
-                            currentFiles.forEach { selectedFiles.remove(it) }
+                            val updated = FileSelectionLogic.deselectAll(selectedFiles, currentFiles)
+                            selectedFiles.clear()
+                            selectedFiles.addAll(updated)
                         }
                     }
                 )
@@ -446,9 +670,9 @@ class MainActivity : FragmentActivity() {
      * Displays real-time status and logs. Collapsible to save screen space.
      */
     @Composable
-    fun ConsoleView(logs: List<String>, progress: Float) {
+    fun ConsoleView(logs: List<String>, progress: Float, currentPass: String) {
         var isExpanded by remember { mutableStateOf(false) }
-        
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -472,7 +696,15 @@ class MainActivity : FragmentActivity() {
                         trackColor = Color.DarkGray
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("Progress: ${(progress * 100).toInt()}%", color = Color.Green, fontSize = 14.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val progressLabel = if (currentPass.isNotEmpty()) currentPass else "Progress: ${(progress * 100).toInt()}%"
+                        Text(progressLabel, color = Color.Green, fontSize = 14.sp)
+                        Text("Algo: ${ShredderEngine.currentAlgorithm.name}", color = Color.Green, fontSize = 12.sp)
+                    }
                 }
                 Icon(
                     if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
@@ -481,7 +713,7 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.padding(start = 16.dp)
                 )
             }
-            
+
             if (isExpanded) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Box(modifier = Modifier.height(240.dp)) {
@@ -513,23 +745,26 @@ class MainActivity : FragmentActivity() {
     @Composable
     fun FileList(params: FileListParams) {
         val files = remember(params.dir, params.searchQuery, params.sortType, params.sortOrder, params.key) {
-            var list = params.dir.listFiles()?.toList() ?: emptyList()
-            if (params.searchQuery.isNotEmpty()) {
-                list = list.filter { it.name.contains(params.searchQuery, ignoreCase = true) }
-            }
-            list = when (params.sortType) {
-                SortType.NAME -> list.sortedBy { it.name.lowercase() }
-                SortType.SIZE -> list.sortedBy { it.length() }
-                SortType.DATE -> list.sortedBy { it.lastModified() }
-            }
-            if (params.sortOrder == SortOrder.DESC) list = list.reversed()
-            // Directories always appear first in the list.
-            list.sortedWith(compareBy { !it.isDirectory })
+            val list = FileBrowserModel.listDirContent(params.dir)
+            FileBrowserModel.processFiles(list, params.searchQuery, params.sortType, params.sortOrder)
         }
 
-        LazyColumn(modifier = params.modifier) {
-            items(files) { file ->
-                FileItem(file, params.selectedFiles.contains(file), params.onDirClick, params.onFileToggle)
+        if (files.isEmpty()) {
+            Box(
+                modifier = params.modifier.fillMaxSize().padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "No files found or directory unreadable.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Color.Gray
+                )
+            }
+        } else {
+            LazyColumn(modifier = params.modifier) {
+                items(files) { file ->
+                    FileItem(file, params.selectedFiles.contains(file), params.onDirClick, params.onFileToggle)
+                }
             }
         }
     }
@@ -571,84 +806,6 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    private fun formatSize(size: Long): String {
-        if (size <= 0) return "0 B"
-        val units = arrayOf("B", "KB", "MB", "GB", "TB")
-        val digitGroups = (log10(size.toDouble()) / log10(1024.0)).toInt()
-        return String.format(Locale.getDefault(), "%.1f %s", size / 1024.0.pow(digitGroups.toDouble()), units[digitGroups])
-    }
-
-    /**
-     * Uses BiometricPrompt to authenticate the user before executing the high-risk "Nuclear Option".
-     */
-    private fun showNuclearDialog(context: Context) {
-        val executor = ContextCompat.getMainExecutor(context)
-        val biometricPrompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                val intent = Intent(context, ShredderService::class.java).apply {
-                    putExtra("fullWipe", true)
-                }
-                ContextCompat.startForegroundService(context, intent)
-                // wipeData(0) would be called after the service finishes the secure wipe.
-            }
-        })
-
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Nuclear Option")
-            .setSubtitle("Authenticate to wipe entire storage and reset device.")
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-            .build()
-
-        biometricPrompt.authenticate(promptInfo)
-    }
-
-    private fun authenticateUser(context: Context, onSucceeded: () -> Unit) {
-        val biometricManager = BiometricManager.from(context)
-        val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
-        
-        when (biometricManager.canAuthenticate(authenticators)) {
-            BiometricManager.BIOMETRIC_SUCCESS -> {
-                val executor = ContextCompat.getMainExecutor(context)
-                val biometricPrompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        super.onAuthenticationSucceeded(result)
-                        onSucceeded()
-                    }
-
-                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        super.onAuthenticationError(errorCode, errString)
-                        if (errorCode == BiometricPrompt.ERROR_USER_CANCELED || errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
-                            finish() // Close app if authentication is cancelled
-                        } else {
-                            Toast.makeText(context, "Authentication error: $errString", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                })
-
-                val promptInfo = BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Shredder Lock")
-                    .setSubtitle("Authenticate to access your secure files")
-                    .setAllowedAuthenticators(authenticators)
-                    .build()
-
-                biometricPrompt.authenticate(promptInfo)
-            }
-            else -> {
-                // If no biometrics or screen lock is set up, allow access but show a warning
-                Toast.makeText(context, "No device security found. Please set up a PIN or Biometrics.", Toast.LENGTH_LONG).show()
-                onSucceeded()
-            }
-        }
-    }
-
-    private fun checkStoragePermission(context: Context): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Environment.isExternalStorageManager()
-        } else {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-        }
-    }
-
     @Composable
     fun PermissionRequestScreen(innerPadding: PaddingValues, onGrant: () -> Unit) {
         Box(modifier = Modifier.fillMaxSize().padding(innerPadding), contentAlignment = Alignment.Center) {
@@ -658,5 +815,130 @@ class MainActivity : FragmentActivity() {
                 Button(onClick = onGrant) { Text("Grant Permission") }
             }
         }
+    }
+
+    /**
+     * Renders a highly professional About screen showing authorship, project repository links,
+     * copyright details, and a concise security legal notice disclaimer.
+     */
+    @Composable
+    fun AboutScreen(onBack: () -> Unit) {
+        val context = LocalContext.current
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("About") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
+                )
+            }
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = "Secure Shredder",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Version 1.2",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.Gray
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Author Section
+                Text(
+                    text = "Author",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                Text(
+                    text = "Viruchith Ganesan",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+
+                // Links Section
+                Text(
+                    text = "Links",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+
+                val websiteUri = "https://viruchith.com"
+                val repoUri = "https://github.com/viruchith/AndroidShredder"
+
+                Text(
+                    text = "Website: $websiteUri",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, websiteUri.toUri())
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Could not open link", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+
+                Text(
+                    text = "GitHub: $repoUri",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, repoUri.toUri())
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Could not open link", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Copyright Section
+                val currentYear = java.util.Calendar.getInstance()[java.util.Calendar.YEAR]
+                Text(
+                    text = "© $currentYear Viruchith Ganesan. All rights reserved.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.Gray
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Legal Disclaimer
+                Text(
+                    text = "Disclaimer & Legal Terms",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.Red
+                )
+                Text(
+                    text = "Secure Shredder is a high-security tool that performs permanent, IRREVERSIBLE file destruction. " +
+                           "By using this application, you agree that you are solely responsible for its utilization and any resulting loss of data. " +
+                           "The author and contributors provide this software 'as-is' and shall not be held liable for accidental files deletion, " +
+                           "bricked systems, or disk formatting issues caused by shredding operations or the Nuclear option. Please use with caution.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    lineHeight = 20.sp
+                )
+            }
+        }
+    }
+
+    private fun formatSize(size: Long): String {
+        if (size <= 0) return "0 B"
+        val units = arrayOf("B", "KB", "MB", "GB", "TB")
+        val digitGroups = (log10(size.toDouble()) / log10(1024.0)).toInt()
+        return String.format(Locale.getDefault(), "%.1f %s", size / 1024.0.pow(digitGroups.toDouble()), units[digitGroups])
     }
 }

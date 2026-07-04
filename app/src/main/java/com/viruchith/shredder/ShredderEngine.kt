@@ -1,5 +1,6 @@
 package com.viruchith.shredder
 
+import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 import java.io.RandomAccessFile
@@ -14,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * ShredderEngine is the core logic provider for secure file deletion.
- * It implements a multi-pass overwrite algorithm designed to thwart data recovery
+ * It implements configurable multi-pass overwrite algorithms designed to thwart data recovery
  * from magnetic and solid-state storage media.
  */
 object ShredderEngine {
@@ -37,12 +38,36 @@ object ShredderEngine {
 
     // State flows for real-time UI updates.
     val progressFlow = MutableStateFlow(0f)
+    val currentPassFlow = MutableStateFlow("")
     val consoleLogFlow = MutableStateFlow<List<String>>(emptyList())
     val refreshTrigger = MutableStateFlow(0)
 
     // AtomicLongs ensure thread-safe progress tracking across parallel shredding tasks.
     private var totalBytesToShred = AtomicLong(0L)
     private var shreddedBytes = AtomicLong(0L)
+
+    // The currently selected secure deletion algorithm
+    var currentAlgorithm: ShredAlgorithm = ShredAlgorithm.Standard
+        private set
+
+    private var preferences: ShredderPreferences? = null
+
+    /**
+     * Initializes the ShredderEngine, loading the previously persisted algorithm selection.
+     */
+    fun init(context: Context) {
+        val prefs = ShredderPreferences.getInstance(context)
+        preferences = prefs
+        currentAlgorithm = prefs.getSelectedAlgorithm()
+    }
+
+    /**
+     * Updates the active shredding algorithm and persists the configuration.
+     */
+    fun setAlgorithm(algo: ShredAlgorithm) {
+        currentAlgorithm = algo
+        preferences?.setSelectedAlgorithm(algo)
+    }
 
     /**
      * Entry point for a shredding session.
@@ -54,7 +79,8 @@ object ShredderEngine {
         totalBytesToShred.set(totalSize)
         shreddedBytes.set(0L)
         progressFlow.value = 0f
-        addConsoleLog("[Started Session] Total size: ${formatSize(totalSize)}")
+        currentPassFlow.value = "Preparing..."
+        addConsoleLog("[Started Session] Algorithm: ${currentAlgorithm.name} | Total size: ${formatSize(totalSize)}")
 
         if (files.isEmpty()) {
             onComplete()
@@ -64,7 +90,7 @@ object ShredderEngine {
         files.forEach { file ->
             executor.execute {
                 try {
-                    recursiveShred(file)
+                    recursiveShred(file, mutableSetOf())
                 } finally {
                     checkCompletion(onComplete)
                 }
@@ -79,6 +105,7 @@ object ShredderEngine {
     private fun checkCompletion(onComplete: () -> Unit) {
         if (executor.activeCount <= 1 && executor.queue.isEmpty()) {
             progressFlow.value = 1.0f
+            currentPassFlow.value = ""
             refreshTrigger.value += 1
             onComplete()
             addConsoleLog("[Session Completed]")
@@ -95,30 +122,52 @@ object ShredderEngine {
 
     /**
      * Recursively calculates the total byte size of all files in a list, 
-     * including contents of sub-directories.
+     * including contents of sub-directories. Safely handles circular symlinks and unreadable files.
      */
-    fun calculateTotalSize(files: List<File>): Long {
+    fun calculateTotalSize(files: List<File>, visited: MutableSet<String> = mutableSetOf()): Long {
         var size = 0L
         files.forEach { file ->
-            if (file.isDirectory) {
-                size += calculateTotalSize(file.listFiles()?.toList() ?: emptyList())
-            } else {
-                size += file.length()
+            try {
+                if (!file.exists()) return@forEach
+                val canonical = file.canonicalPath
+                if (visited.add(canonical)) {
+                    if (file.isDirectory) {
+                        val children = file.listFiles()
+                        if (children != null) {
+                            size += calculateTotalSize(children.toList(), visited)
+                        }
+                    } else {
+                        size += file.length()
+                    }
+                }
+            } catch (e: Exception) {
+                // Safely handle file system edge cases
             }
         }
         return size
     }
 
     /**
-     * Recursively counts the total number of files.
+     * Recursively counts the total number of files safely, guarding against recursion loops.
      */
-    fun countFiles(files: List<File>): Int {
+    fun countFiles(files: List<File>, visited: MutableSet<String> = mutableSetOf()): Int {
         var count = 0
         files.forEach { file ->
-            if (file.isDirectory) {
-                count += countFiles(file.listFiles()?.toList() ?: emptyList())
-            } else {
-                count++
+            try {
+                if (!file.exists()) return@forEach
+                val canonical = file.canonicalPath
+                if (visited.add(canonical)) {
+                    if (file.isDirectory) {
+                        val children = file.listFiles()
+                        if (children != null) {
+                            count += countFiles(children.toList(), visited)
+                        }
+                    } else {
+                        count++
+                    }
+                }
+            } catch (e: Exception) {
+                // Safely handle file system edge cases
             }
         }
         return count
@@ -126,32 +175,51 @@ object ShredderEngine {
 
     /**
      * Handles directory structures by shredding files first, then deleting folders.
+     * Uses a canonical path visited tracking set to prevent infinite loops from symlinks.
      */
-    private fun recursiveShred(file: File) {
-        if (file.isDirectory) {
-            file.listFiles()?.forEach { recursiveShred(it) }
-            if (!file.delete()) {
-                // Log.e(TAG, "Failed to delete directory: ${file.absolutePath}")
+    private fun recursiveShred(file: File, visited: MutableSet<String>) {
+        try {
+            if (!file.exists()) {
+                addConsoleLog("[Warning] Skipping non-existent file/folder: ${file.name}")
+                return
             }
-        } else {
-            secureShred(file)
+
+            val canonical = file.canonicalPath
+            if (!visited.add(canonical)) {
+                addConsoleLog("[Warning] Circular path or duplicate file ignored: ${file.name}")
+                return
+            }
+
+            if (file.isDirectory) {
+                val children = file.listFiles()
+                if (children == null) {
+                    addConsoleLog("[Error] Directory unreadable or access denied: ${file.name}")
+                    return
+                }
+                children.forEach { recursiveShred(it, visited) }
+                if (!file.delete()) {
+                    addConsoleLog("[Error] Failed to delete directory: ${file.name}")
+                }
+            } else {
+                secureShred(file)
+            }
+        } catch (e: Exception) {
+            addConsoleLog("[Failed] Error shredding ${file.name}: ${e.message}")
         }
     }
 
     /**
-     * Implements a 3-pass secure shredding algorithm:
-     * Pass 1: Cryptographically strong random data.
-     * Pass 2: Alternating bit patterns (0xAA, 0x55) to stress test magnetic storage cells.
-     * Pass 3: Final random data pass.
-     * 
-     * After overwriting, the file is renamed to a random string and truncated to 
-     * zero length before final deletion to wipe metadata.
+     * Implements the secure shredding algorithm sequence of the active algorithm:
+     * Overwrites, renames to a random string, and truncates to zero length.
      */
     private fun secureShred(file: File) {
         val fileName = file.name
         val length = file.length()
-        // Log.v(TAG, "Starting shred: $fileName (Size: $length, Thread: ${Thread.currentThread().id})")
         addConsoleLog("[Started] $fileName")
+
+        val algo = currentAlgorithm
+        val totalPasses = algo.passes.size
+        var currentPassIndex = 0
 
         try {
             if (length > 0) {
@@ -162,20 +230,14 @@ object ShredderEngine {
                  * actually flushed to physical storage.
                  */
                 RandomAccessFile(file, "rw").use { raf ->
-                    // Pass 1: Random
-                    addConsoleLog("[Pass 1/3] $fileName")
-                    performPass(raf, length, null)
-                    raf.fd.sync()
-
-                    // Pass 2: AA/55 patterns
-                    addConsoleLog("[Pass 2/3] $fileName")
-                    performPass(raf, length, byteArrayOf(0xAA.toByte(), 0x55.toByte()))
-                    raf.fd.sync()
-
-                    // Pass 3: Final Random
-                    addConsoleLog("[Pass 3/3] $fileName")
-                    performPass(raf, length, null)
-                    raf.fd.sync()
+                    algo.passes.forEachIndexed { index, pass ->
+                        currentPassIndex = index
+                        val passIndex = index + 1
+                        currentPassFlow.value = "Pass $passIndex of $totalPasses (${pass.label})"
+                        addConsoleLog("[Pass $passIndex/$totalPasses | ${pass.label}] $fileName")
+                        performPass(raf, length, pass)
+                        raf.fd.sync()
+                    }
                 }
             } else {
                 updateProgress(0) 
@@ -188,35 +250,21 @@ object ShredderEngine {
                 // Truncate file to release allocated disk blocks.
                 RandomAccessFile(renamedFile, "rw").use { it.setLength(0) }
                 if (!renamedFile.delete()) {
-                    // Log.e(TAG, "Failed to delete renamed file: ${renamedFile.absolutePath}")
                     renamedFile.deleteOnExit()
                 }
             } else {
                 if (!file.delete()) {
-                    // Log.e(TAG, "Failed to delete file: ${file.absolutePath}")
                     file.deleteOnExit()
                 }
             }
 
             addConsoleLog("[Deleted] $fileName")
-            // Log.v(TAG, "Completed shred: $fileName")
         } catch (e: Exception) {
-            // Log.e(TAG, "Error shredding $fileName", e)
             addConsoleLog("[Failed] $fileName: ${e.message}")
             // Compensate progress on failure so the progress bar reaches 100%.
-            val remaining = (length * 3) - (length * getCurrentPass(e))
+            val remaining = (length * totalPasses) - (length * currentPassIndex)
             updateProgress(maxOf(0, remaining))
             if (!file.delete()) file.deleteOnExit()
-        }
-    }
-
-    private fun getCurrentPass(e: Exception): Int {
-        val msg = e.message ?: ""
-        return when {
-            msg.contains("Pass 1") -> 0
-            msg.contains("Pass 2") -> 1
-            msg.contains("Pass 3") -> 2
-            else -> 0
         }
     }
 
@@ -224,20 +272,28 @@ object ShredderEngine {
      * Overwrites the file content with the specified pattern or random data.
      * Uses a 1MB buffer to optimize throughput for large files.
      */
-    private fun performPass(raf: RandomAccessFile, length: Long, pattern: ByteArray?) {
+    private fun performPass(raf: RandomAccessFile, length: Long, pass: ShredPass) {
         raf.seek(0)
         val buffer = ByteArray(1024 * 1024) 
         var written = 0L
         while (written < length) {
             val toWrite = minOf(buffer.size.toLong(), length - written).toInt()
-            if (pattern != null) {
-                // Fill buffer with alternating pattern.
-                for (i in 0 until toWrite) {
-                    buffer[i] = pattern[(written + i).toInt() % pattern.size]
+            when (val type = pass.type) {
+                is PassType.RANDOM -> {
+                    random.nextBytes(buffer)
                 }
-            } else {
-                // Fill buffer with random entropy.
-                random.nextBytes(buffer)
+                is PassType.ZEROS -> {
+                    buffer.fill(0)
+                }
+                is PassType.ONES -> {
+                    buffer.fill(0xFF.toByte())
+                }
+                is PassType.PATTERN -> {
+                    val patternBytes = type.bytes
+                    for (i in 0 until toWrite) {
+                        buffer[i] = patternBytes[(written + i).toInt() % patternBytes.size]
+                    }
+                }
             }
             raf.write(buffer, 0, toWrite)
             written += toWrite
@@ -249,29 +305,46 @@ object ShredderEngine {
         val currentShredded = shreddedBytes.addAndGet(bytes)
         val total = totalBytesToShred.get()
         if (total > 0) {
-            // total * 3 because we do 3 passes.
-            progressFlow.value = minOf(1.0f, currentShredded.toFloat() / (total * 3))
+            val totalPasses = currentAlgorithm.passes.size
+            progressFlow.value = minOf(1.0f, currentShredded.toFloat() / (total * totalPasses))
         }
     }
 
     /**
      * Wipes all available free space on the partition by creating a temporary file 
      * and filling it until the storage is exhausted (ENOSPC).
+     * Employs a single pass of the currently selected algorithm's first pass type.
      */
     fun wipeFreeSpace(storageDir: File) {
         addConsoleLog("[Wiping Free Space]")
         val wipeFile = File(storageDir, "wipe_free_space_${System.currentTimeMillis()}.tmp")
         try {
+            val firstPass = currentAlgorithm.passes.firstOrNull() ?: ShredPass(PassType.RANDOM, "Random entropy")
             RandomAccessFile(wipeFile, "rw").use { raf ->
                 val buffer = ByteArray(1024 * 1024)
                 while (true) {
-                    random.nextBytes(buffer)
+                    when (val type = firstPass.type) {
+                        is PassType.RANDOM -> {
+                            random.nextBytes(buffer)
+                        }
+                        is PassType.ZEROS -> {
+                            buffer.fill(0)
+                        }
+                        is PassType.ONES -> {
+                            buffer.fill(0xFF.toByte())
+                        }
+                        is PassType.PATTERN -> {
+                            val patternBytes = type.bytes
+                            for (i in buffer.indices) {
+                                buffer[i] = patternBytes[i % patternBytes.size]
+                            }
+                        }
+                    }
                     raf.write(buffer)
                 }
             }
         } catch (e: java.io.IOException) {
-            // Expected when storage is full.
-            // Log.d(TAG, "Free space wipe completed (Disk Full)")
+            // Expected when storage is full (ENOSPC).
         } finally {
             wipeFile.delete()
             addConsoleLog("[Free Space Wiped]")

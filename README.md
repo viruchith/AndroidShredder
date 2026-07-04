@@ -1,6 +1,6 @@
-# Shredder - Secure File Deletion for Android
+# Shredder - Secure File Deletion & Device Wiper for Android
 
-[![Version](https://img.shields.io/badge/Version-1.1-blue.svg)](https://github.com/viruchith/shredder/releases)
+[![Version](https://img.shields.io/badge/Version-1.2-blue.svg)](https://github.com/viruchith/shredder/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
 [![Min SDK](https://img.shields.io/badge/Min%20SDK-24%20(Android%207.0)-blue.svg)](https://developer.android.com/studio/releases/platforms)
@@ -8,68 +8,139 @@
 [![Language](https://img.shields.io/badge/Language-Kotlin-blueviolet.svg)](https://kotlinlang.org)
 [![UI](https://img.shields.io/badge/UI-Jetpack%20Compose-orange.svg)](https://developer.android.com/jetpack/compose)
 
-Shredder is a high-security Android application designed to permanently and irrecoverably delete files and directories. It implements industry-standard multi-pass shredding algorithms to thwart data recovery even from specialized hardware forensic tools.
+Shredder is a high-security Android application designed to safely delete files, folders, and wipe unused space. It provides a highly defensive security posture by gating access behind device locks and biometric credentials, shielding critical system files from accidental shredding, and offering a dual-layered "Nuclear Option" (Full Factory Reset).
+
+---
+
+## 🎯 Threat Model
+
+Shredder is engineered to mitigate specific security threats while operating under the sandboxed constraints of the Android platform:
+
+*   **Threat 1: Device Loss / Physical Theft**
+    *   *Mitigation*: Shredder gates access app-wide. If an attacker gains physical possession of an unlocked phone, they cannot open Shredder to inspect sensitive hidden files or run destructive actions without a secondary biometric/PIN challenge.
+*   **Threat 2: Post-Deletion Forensic Recovery**
+    *   *Mitigation*: Shredder overwrites target blocks with pseudo-random and structured bit-patterns prior to unlinking. This prevents basic undelete tools and forensic software from recovering file content from free blocks.
+*   **Threat 3: Metadata / Identity Leakage**
+    *   *Mitigation*: Before deletion, files are renamed to random string identifiers and truncated to `0` bytes, erasing trace elements of the original filenames and lengths.
+*   **Threat 4: Coerced Device Wipe (Emergency)**
+    *   *Mitigation*: The "Nuclear Option" is available to immediately initiate a cryptographic wipe and factory reset if the device's physical security is compromised.
+
+---
+
+## ⚠️ Limitations of Modern Storage (eMMC / UFS / SSD)
+
+Unlike old magnetic platters where bits were directly overwritten on physical tracks, modern smartphones use **Flash-based Solid-State Storage (eMMC/UFS)** which operates under fundamentally different mechanics:
+
+1.  **Flash Translation Layer (FTL)**: Modern storage chips utilize an FTL to map logical blocks to physical NAND flash cells. When a file is overwritten, the storage controller writes the new data to a *different* physical block (out-of-place writes) and marks the old block as "dirty" to be garbage-collected later.
+2.  **Wear Leveling**: To prolong storage life, the controller distributes write operations evenly across cells. An in-place overwrite is not physically guaranteed.
+3.  **Over-Provisioning**: Storage chips maintain hidden sectors for bad block replacement. Sensitive data might reside in these hidden sectors, unreachable by standard file-system APIs.
+
+### How Shredder Mitigates This
+*   **Free Space Wiper**: Because individual file overwriting can leave orphaned "dirty" blocks in free space, Shredder provides a **Free Space Wiper**. This creates a continuous stream of random files filling the storage partition to its limits (triggering `ENOSPC`). This forces the FTL to garbage-collect and overwrite all unallocated blocks, neutralizing leaked data fragments.
+*   **Hardware Encryption**: Modern Android devices use File-Based Encryption (FBE). For absolute secure deletion of the entire chip, the **Nuclear Option (Factory Reset)** discards the device's master encryption keys, rendering all physical flash sectors permanently unreadable instant-by-instant.
+
+---
+
+## 🔒 Hardened Security Gateways
+
+1.  **Strict Security Posture Enforcement**
+    *   If no lock screen credentials (PIN, Pattern, Password, or Biometrics) are configured, Shredder **blocks application access**. Instead of bypassing or warning via a toast, the app displays a full-screen block and guides the user to System Settings to secure their device first.
+2.  **Accidental Destruction Safeguards**
+    *   The standard file shredder incorporates path analysis via `DestructiveOrchestrator` to automatically block the shredding of critical system folders (like `/`, `/storage/emulated/0`, `/sdcard`, `/Android/data`, and `/Android/obb`).
+3.  **Dual-Layered Nuclear Option**
+    *   To prevent accidental triggers, clicking the Nuclear Option does *not* immediately launch authentication. Instead, it prompts a high-visibility warning dialog requiring the user to explicitly type the phrase **"NUCLEAR WIPE"** in a text field. Once typed, the user must then pass a biometric/device credential authentication check before the reset service starts.
+
+---
 
 ## 🚀 Key Features
 
--   **Multi-Pass Shredding**: Implements a robust 3-pass overwrite algorithm.
--   **Metadata Wiping**: Renames files to random strings and truncates them before final deletion to hide original file identities.
--   **Free Space Wiper**: Securely wipes available free space on the device storage to prevent recovery of previously deleted files.
--   **Nuclear Option**: Integrated device administrator capability to trigger a secure factory reset (wiping all data).
--   **Foreground Execution**: Uses Android Foreground Services to ensure long-running shredding tasks complete successfully even if the app is in the background.
--   **Biometric Security**: Protects the entire application and high-risk operations (like the Nuclear Option) with Biometric/PIN authentication.
--   **Notification Support**: Fully compatible with Android 13+ notification permissions for reliable foreground execution.
--   **Modern UI**: Built entirely with Jetpack Compose for a responsive, fluid user experience, featuring a collapsible real-time console.
+*   **Configurable Multi-Pass Shredding**: Implements multiple secure, industry-standard overwrite algorithms with explicit manual `fsync` flushing.
+*   **Recursion Guards**: The counting and shredding engines track canonical paths to prevent infinite loops from circular symlinks.
+*   **Real-time Log Console**: Fully collapsible and memory-sanitized console in the UI. Absolute file paths are never printed to system `logcat` to avoid metadata leakage.
+*   **Foreground Service Execution**: Runs shredding operations in a Foreground Service to prevent the OS from killing the process during intensive disk operations.
 
-## 🛠 Technical Implementation
+---
 
-### Shredding Algorithm (`ShredderEngine.kt`)
+## 🎛 Supported Shredding Algorithms
 
-The core engine implements a 3-pass overwrite strategy:
+Users can customize the secure overwrite sequence to balance performance and security needs:
 
-1.  **Pass 1 (Random)**: Overwrites the entire file with cryptographically strong random data using `java.security.SecureRandom`.
-2.  **Pass 2 (Pattern)**: Overwrites with alternating bit patterns (`0xAA`, `0x55`) to stress test and flip bits on magnetic and flash storage cells.
-3.  **Pass 3 (Random)**: A final pass of random entropy.
+1.  **Fast (1-pass)**
+    *   *Sequence*: 1 × Cryptographically strong Random entropy.
+    *   *Best use*: Recommended for Solid-State Drives (SSDs) and modern flash storage where block-level wear-leveling makes multi-pass schemes less useful.
+2.  **Standard (3-pass)** *(Default)*
+    *   *Sequence*: Random -> Alternating Bit Patterns (`0xAA`/`0x55`) -> Random.
+    *   *Best use*: Excellent, general-purpose multi-pass balance.
+3.  **DoD 5220.22-M (7-pass)**
+    *   *Sequence*: Zeros (`0x00`) -> Ones (`0xFF`) -> Random -> Pattern `0x96` -> Zeros (`0x00`) -> Ones (`0xFF`) -> Random.
+    *   *Best use*: Fully compliant with the United States Department of Defense specifications for secure overwrite media sanitization.
+4.  **Schneier (7-pass)**
+    *   *Sequence*: Zeros (`0x00`) -> Ones (`0xFF`) -> 5 × Random passes.
+    *   *Best use*: Bruce Schneier's highly acclaimed algorithm combining block boundary limits with high-entropy cryptographic randomization.
+5.  **Gutmann (35-pass)**
+    *   *Sequence*: 4 × Random -> 27 structured alternating pattern passes targeting raw magnetic sector encoding -> 4 × Random.
+    *   *Best use*: Legacy sanitization standard originally formulated for magnetic disk media. *Warning: Extremely slow on large files due to extensive I/O passes.*
 
-**I/O Optimization**:
--   Uses `RandomAccessFile` in `"rw"` mode for direct disk access.
--   Employs a **1MB buffer** to maximize throughput on modern high-speed storage.
--   Explicitly calls `FileDescriptor.sync()` after every pass to ensure the OS flushes the write buffer to physical hardware.
+---
 
-### Service Architecture (`ShredderService.kt`)
+## ⚙️ Settings & Customization
 
-Shredding is an I/O intensive and potentially long-running operation. To prevent the system from killing the process:
--   The app promotes itself to a **Foreground Service**.
--   Uses `START_NOT_STICKY` to manage lifecycle efficiently.
--   Provides real-time progress updates via a persistent notification.
+A dedicated **Settings Screen** is accessible from the top toolbar's gear button, allowing users to:
+*   **Select active algorithms**: Instantly switch between Fast, Standard, DoD, Schneier, and Gutmann algorithms.
+*   **Gutmann Warning**: A prominent warning banner is displayed next to the Gutmann option to alert users of the performance penalty (⚠️ *Extremely slow — 35 passes*).
+*   **Preferences Persistency**: Selected algorithms are persisted across application restarts using the device's standard private `SharedPreferences` via the `ShredderPreferences` helper.
+*   **Dynamic Progress Feedback**: The progress label dynamically transitions from percentage to real-time `Pass X of Y (Pass Label)` info tracking based on the selected algorithm's length.
 
-### Security & Permissions
+---
 
--   **`MANAGE_EXTERNAL_STORAGE`**: Utilizes the Scoped Storage "All Files Access" permission (on Android 11+) to allow deep shredding across the entire user-accessible storage.
--   **Device Administration**: Registered as a Device Admin to enable the `wipeData()` system call for the "Nuclear Option".
--   **`POST_NOTIFICATIONS`**: Required on Android 13+ to show the foreground service notification, ensuring the shredding process is not interrupted.
--   **No Backups**: `android:allowBackup="false"` is set in the Manifest to prevent sensitive app states from being cached in cloud backups.
+## 🛡 Permission Details
+
+*   **`MANAGE_EXTERNAL_STORAGE` (All Files Access)**: Required on Android 11+ to browse and securely shred user-selected files on shared storage.
+*   **`WRITE_EXTERNAL_STORAGE`**: Legacy permission required on Android 10 and lower.
+*   **`POST_NOTIFICATIONS`**: Required on Android 13+ to display the ongoing shredding progress notification.
+*   **Device Administrator (`DevicePolicyManager`)**: Required to obtain privileges for the `wipeData(0)` API to execute the Nuclear Option.
+
+---
+
+## 🛠 Setup & Usage Instructions
+
+### 1. Enable Device Lock
+Ensure your phone has a secure PIN, pattern, password, or biometrics configured.
+
+### 2. Grant Storage Permissions
+On start, the app will request the necessary storage permissions.
+*   *Android 11+*: Grant the "All Files Access" setting when prompted.
+*   *Android 10-*: Accept the standard runtime permission.
+
+### 3. Customize Shredding Algorithm
+1.  Tap the **Settings (Gear)** icon in the top toolbar.
+2.  Review and select your preferred secure erasure algorithm.
+
+### 4. (Optional) Enable Nuclear Option (Factory Reset)
+1.  Tap the **Device Admin (Shield)** icon in the top toolbar.
+2.  Follow the system prompt to activate Secure Shredder as a **Device Administrator**.
+
+### 5. Shredding Files
+1.  Navigate the directory tree using the built-in file explorer.
+2.  Select files and folders using the checkboxes.
+3.  Tap the **Trash Icon** to review total size/count, then confirm to shred.
+
+---
 
 ## 🏗 Build Requirements
 
--   **Android SDK**: 36 (target), 24 (min)
--   **Language**: Kotlin
--   **UI Framework**: Jetpack Compose
--   **Build System**: Gradle Kotlin DSL (`.kts`)
-
-## 🛡 Production Readiness
-
-The application is configured for production with:
--   **R8/ProGuard**: Enabled for code shrinking and obfuscation.
--   **Resource Shrinking**: Enabled to minimize APK footprint.
--   **Log Sanitization**: Verbose and debug logging is disabled in the core engine to prevent metadata leakage in `logcat`.
-
-## 🆕 What's New (v1.1)
-
--   **App-wide Lock**: Added biometric authentication barrier on application start.
--   **Refactored Architecture**: Optimized `MainActivity` for better performance and maintainability using decomposed composables and state-driven UI.
--   **Kotlin Intrinsics**: Migrated core math operations to `kotlin.math` for improved platform integration.
--   **Bug Fixes**: Resolved resource linking issues and optimized file listing logic.
+*   **Android SDK**: targetSdk 36, minSdk 24
+*   **Language**: Kotlin 2.2.10
+*   **UI Framework**: Jetpack Compose
+*   **Build System**: Gradle Kotlin DSL (`.kts`)
 
 ---
+
+## 🆕 What's New (v1.2)
+
+*   **Configurable Overwrite Algorithms**: Choose from Fast (1-pass), Standard (3-pass), DoD 5220.22-M (7-pass), Bruce Schneier (7-pass), and Peter Gutmann (35-pass) algorithms.
+*   **Settings Screen**: Clean and professional Jetpack Compose interface to easily configure and persist shredding algorithm choices.
+*   **Dynamic Progress Feedback**: The progress section dynamically displays the current pass number and exact label (e.g., "Pass 1 of 7 (0x00 zeros)") during secure erasure operations.
+*   **Dead Code Cleanup**: Eliminated unused legacy `Shredder.kt` file for better project maintainability.
+
 *Disclaimer: Data deleted with Shredder is IRREVERSIBLE. Use with caution.*
