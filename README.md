@@ -139,8 +139,10 @@ On start, the app will request the necessary storage permissions.
 ## 🆕 What's New (v1.2)
 
 *   **Configurable Overwrite Algorithms**: Choose from Fast (1-pass), Standard (3-pass), DoD 5220.22-M (7-pass), Bruce Schneier (7-pass), and Peter Gutmann (35-pass) algorithms.
-*   **Settings Screen**: Clean and professional Jetpack Compose interface to easily configure and persist shredding algorithm choices.
-*   **Dynamic Progress Feedback**: The progress section dynamically displays the current pass number and exact label (e.g., "Pass 1 of 7 (0x00 zeros)") during secure erasure operations.
+*   **Hardened Danger Zone in Settings**: Removed the highly destructive "Nuclear Option" and "Device Admin" buttons from the main screen's top app bar to prevent accidental triggers. They are now cleanly isolated within a dedicated, red-bordered "Danger Zone" card at the bottom of the Settings screen.
+*   **State-Preserving Navigation**: Replaced inline screen-switching logic with a unified, type-safe `AppScreen` enum-driven state. This guarantees that your current directory level, file selections, and search/sort queries survive transitions to the Settings or About screens and back.
+*   **Fully Clickable About Screen Links**: Wrapped both the labels (e.g. "Website:") and URLs in unified clickable rows with underlined styling and primary color highlights, increasing click target accessibility.
+*   **Contextual Back-Button Interception**: Registered a standard Compose `BackHandler` that contextually intercepts the system back button—navigating up parent directories in the file browser or returning to the browser from secondary screens—without abruptly exiting the app unless you are at the storage root.
 *   **Dead Code Cleanup**: Eliminated unused legacy `Shredder.kt` file for better project maintainability.
 
 *Disclaimer: Data deleted with Shredder is IRREVERSIBLE. Use with caution.*

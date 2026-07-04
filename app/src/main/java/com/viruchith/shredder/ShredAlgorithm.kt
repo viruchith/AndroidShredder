@@ -17,12 +17,20 @@ sealed class PassType {
 
 data class ShredPass(val type: PassType, val label: String)
 
-sealed class ShredAlgorithm(val name: String, val description: String, val passes: List<ShredPass>) {
+sealed class ShredAlgorithm(
+    val name: String,
+    val description: String,
+    val passes: List<ShredPass>,
+    val colorHex: Long,
+    val meaning: String
+) {
 
     object Fast : ShredAlgorithm(
         name = "Fast (1-pass)",
         description = "Quick, single pass of random entropy. Best suited for SSDs and modern flash storage.",
-        passes = listOf(ShredPass(PassType.RANDOM, "Random entropy"))
+        passes = listOf(ShredPass(PassType.RANDOM, "Random entropy")),
+        colorHex = 0xFF26A69A, // Teal/Mint
+        meaning = "Quick, low-overhead"
     )
 
     object Standard : ShredAlgorithm(
@@ -32,7 +40,9 @@ sealed class ShredAlgorithm(val name: String, val description: String, val passe
             ShredPass(PassType.RANDOM, "Random entropy"),
             ShredPass(PassType.PATTERN(byteArrayOf(0xAA.toByte(), 0x55.toByte())), "0xAA/0x55 alternating"),
             ShredPass(PassType.RANDOM, "Random entropy")
-        )
+        ),
+        colorHex = 0xFF42A5F5, // Blue
+        meaning = "Default, balanced"
     )
 
     object DoD5220_22M : ShredAlgorithm(
@@ -46,7 +56,9 @@ sealed class ShredAlgorithm(val name: String, val description: String, val passe
             ShredPass(PassType.ZEROS, "0x00 zeros"),
             ShredPass(PassType.ONES, "0xFF ones"),
             ShredPass(PassType.RANDOM, "Random entropy")
-        )
+        ),
+        colorHex = 0xFFFFCA28, // Amber
+        meaning = "Serious, official standard"
     )
 
     object Schneier : ShredAlgorithm(
@@ -60,7 +72,9 @@ sealed class ShredAlgorithm(val name: String, val description: String, val passe
             ShredPass(PassType.RANDOM, "Random entropy"),
             ShredPass(PassType.RANDOM, "Random entropy"),
             ShredPass(PassType.RANDOM, "Random entropy")
-        )
+        ),
+        colorHex = 0xFFFF7043, // Orange
+        meaning = "High security, longer"
     )
 
     object Gutmann : ShredAlgorithm(
@@ -108,7 +122,9 @@ sealed class ShredAlgorithm(val name: String, val description: String, val passe
             // 4 random passes
             repeat(4) { list.add(ShredPass(PassType.RANDOM, "Random entropy")) }
             list
-        }
+        },
+        colorHex = 0xFFE53935, // Deep Red/Crimson
+        meaning = "Extreme — use with caution"
     )
 
     companion object {
