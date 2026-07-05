@@ -16,7 +16,8 @@ object DestructiveOrchestrator {
         try {
             paths.add(Environment.getExternalStorageDirectory().canonicalPath.lowercase())
             paths.add(Environment.getExternalStorageDirectory().absolutePath.lowercase())
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+        }
         paths.add("/")
         paths
     }
@@ -27,10 +28,10 @@ object DestructiveOrchestrator {
     fun isHighRiskPath(file: File): Boolean {
         return try {
             val canonical = file.canonicalPath.lowercase()
-            criticalPaths.any { canonical == it } || 
-                canonical.endsWith("/android") || 
-                canonical.endsWith("/android/data") ||
-                canonical.endsWith("/android/obb")
+            criticalPaths.any { canonical == it } ||
+                    canonical.endsWith("/android") ||
+                    canonical.endsWith("/android/data") ||
+                    canonical.endsWith("/android/obb")
         } catch (e: Exception) {
             true // Treat errors as high risk defensively
         }

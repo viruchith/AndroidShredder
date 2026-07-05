@@ -10,10 +10,12 @@ import androidx.core.content.edit
  */
 class ShredderPreferences private constructor(context: Context) {
 
-    private val prefs: SharedPreferences = context.getSharedPreferences("shredder_prefs", Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences =
+        context.getSharedPreferences("shredder_prefs", Context.MODE_PRIVATE)
 
     fun getSelectedAlgorithm(): ShredAlgorithm {
-        val name = prefs.getString("selected_algorithm", ShredAlgorithm.Standard.name) ?: ShredAlgorithm.Standard.name
+        val name = prefs.getString("selected_algorithm", ShredAlgorithm.Standard.name)
+            ?: ShredAlgorithm.Standard.name
         return ShredAlgorithm.fromName(name)
     }
 

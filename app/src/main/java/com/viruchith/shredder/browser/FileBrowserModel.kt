@@ -1,7 +1,7 @@
 package com.viruchith.shredder.browser
 
-import com.viruchith.shredder.MainActivity.SortType
 import com.viruchith.shredder.MainActivity.SortOrder
+import com.viruchith.shredder.MainActivity.SortType
 import java.io.File
 
 /**

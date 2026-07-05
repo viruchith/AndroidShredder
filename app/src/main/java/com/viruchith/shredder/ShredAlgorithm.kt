@@ -11,6 +11,7 @@ sealed class PassType {
             other as PATTERN
             return bytes.contentEquals(other.bytes)
         }
+
         override fun hashCode(): Int = bytes.contentHashCode()
     }
 }
@@ -38,7 +39,10 @@ sealed class ShredAlgorithm(
         description = "Overwrites with random data, then alternating patterns (0xAA/0x55), then random data again.",
         passes = listOf(
             ShredPass(PassType.RANDOM, "Random entropy"),
-            ShredPass(PassType.PATTERN(byteArrayOf(0xAA.toByte(), 0x55.toByte())), "0xAA/0x55 alternating"),
+            ShredPass(
+                PassType.PATTERN(byteArrayOf(0xAA.toByte(), 0x55.toByte())),
+                "0xAA/0x55 alternating"
+            ),
             ShredPass(PassType.RANDOM, "Random entropy")
         ),
         colorHex = 0xFF42A5F5, // Blue
@@ -84,7 +88,7 @@ sealed class ShredAlgorithm(
             val list = mutableListOf<ShredPass>()
             // 4 random passes
             repeat(4) { list.add(ShredPass(PassType.RANDOM, "Random entropy")) }
-            
+
             // 27 specific pattern passes
             val patterns = listOf(
                 Pair(byteArrayOf(0x55.toByte()), "0x55 pattern"),
@@ -129,7 +133,7 @@ sealed class ShredAlgorithm(
 
     companion object {
         fun values(): List<ShredAlgorithm> = listOf(Fast, Standard, DoD5220_22M, Schneier, Gutmann)
-        
+
         fun fromName(name: String): ShredAlgorithm {
             return values().find { it.name == name } ?: Standard
         }
