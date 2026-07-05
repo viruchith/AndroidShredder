@@ -1,6 +1,6 @@
 # Shredder - Secure File Deletion & Device Wiper for Android
 
-[![Version](https://img.shields.io/badge/Version-1.2-blue.svg)](https://github.com/viruchith/shredder/releases)
+[![Version](https://img.shields.io/badge/Version-1.3-blue.svg)](https://github.com/viruchith/shredder/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
 [![Min SDK](https://img.shields.io/badge/Min%20SDK-24%20(Android%207.0)-blue.svg)](https://developer.android.com/studio/releases/platforms)
@@ -58,6 +58,7 @@ Unlike old magnetic platters where bits were directly overwritten on physical tr
 *   **Recursion Guards**: The counting and shredding engines track canonical paths to prevent infinite loops from circular symlinks.
 *   **Real-time Log Console**: Fully collapsible and memory-sanitized console in the UI. Absolute file paths are never printed to system `logcat` to avoid metadata leakage.
 *   **Foreground Service Execution**: Runs shredding operations in a Foreground Service to prevent the OS from killing the process during intensive disk operations.
+*   **Free Space Wipe Only (Settings)**: Dedicated operation that writes temporary wipe chunks only inside the app cache path, with live progress, cancel support, and cleanup guarantees.
 
 ---
 
@@ -125,6 +126,17 @@ On start, the app will request the necessary storage permissions.
 2.  Select files and folders using the checkboxes.
 3.  Tap the **Trash Icon** to review total size/count, then confirm to shred.
 
+### 6. Free Space Wipe Only
+1.  Open **Settings**.
+2.  In **Free Space Wipe**, review warnings and tap **Start Free Space Wipe**.
+3.  Confirm acknowledgement in the dialog and start the session.
+4.  Track progress in-app and in notification; use **Cancel Wipe** (or notification cancel action) to stop safely.
+
+Safety guarantees for this mode:
+*   Wipe artifacts are created only under `Android/data/<package>/cache/free_space_wipe/<sessionId>/`.
+*   Cleanup never enumerates or deletes outside this directory (canonical path-guarded).
+*   This mode is independent from Nuclear Option and never calls `DevicePolicyManager.wipeData()`.
+
 ---
 
 ## 🏗 Build Requirements
@@ -136,7 +148,7 @@ On start, the app will request the necessary storage permissions.
 
 ---
 
-## 🆕 What's New (v1.2)
+## 🆕 What's New (v1.3)
 
 *   **Configurable Overwrite Algorithms**: Choose from Fast (1-pass), Standard (3-pass), DoD 5220.22-M (7-pass), Bruce Schneier (7-pass), and Peter Gutmann (35-pass) algorithms.
 *   **Hardened Danger Zone in Settings**: Removed the highly destructive "Nuclear Option" and "Device Admin" buttons from the main screen's top app bar to prevent accidental triggers. They are now cleanly isolated within a dedicated, red-bordered "Danger Zone" card at the bottom of the Settings screen.

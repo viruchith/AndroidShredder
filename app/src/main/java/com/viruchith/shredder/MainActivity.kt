@@ -1,6 +1,7 @@
 package com.viruchith.shredder
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -8,6 +9,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
 import android.widget.Toast
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -62,6 +64,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -171,8 +174,25 @@ class MainActivity : FragmentActivity() {
 
         // Collect flows from the ShredderEngine for reactive UI updates.
         val progress by ShredderEngine.progressFlow.collectAsState()
+        val freeSpaceWipeStatus by ShredderEngine.freeSpaceWipeStatusFlow.collectAsState()
         val consoleLogs by ShredderEngine.consoleLogFlow.collectAsState()
         val refreshTrigger by ShredderEngine.refreshTrigger.collectAsState()
+
+        val isOperationActive = (progress > 0f && progress < 1.0f) ||
+            freeSpaceWipeStatus.startsWith("Writing") ||
+            freeSpaceWipeStatus.startsWith("Cleaning up")
+
+        val activity = context as? Activity
+        DisposableEffect(isOperationActive) {
+            if (isOperationActive) {
+                activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+            onDispose {
+                activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
 
         // Key used to force recomposition of the FileList when a shredding session ends.
         var fileListKey by remember { mutableIntStateOf(0) }
@@ -768,6 +788,13 @@ class MainActivity : FragmentActivity() {
     @Composable
     fun AboutScreen(onBack: () -> Unit) {
         val context = LocalContext.current
+        val appVersion = remember(context) {
+            try {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "-"
+            } catch (_: Exception) {
+                "-"
+            }
+        }
         val scrollState = rememberScrollState()
         Scaffold(
             topBar = {
@@ -795,7 +822,7 @@ class MainActivity : FragmentActivity() {
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Version 1.2",
+                    text = "Version $appVersion",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.Gray
                 )

@@ -1,16 +1,19 @@
 package com.viruchith.shredder
 
-import com.viruchith.shredder.MainActivity.SortType
 import com.viruchith.shredder.MainActivity.SortOrder
+import com.viruchith.shredder.MainActivity.SortType
 import com.viruchith.shredder.browser.FileBrowserModel
 import com.viruchith.shredder.browser.FileSelectionLogic
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * ShredderUnitTest contains unit tests for the extracted pure Kotlin logic
@@ -278,5 +281,40 @@ class ShredderUnitTest {
 
         val invalid = ShredAlgorithm.fromName("NonExistentAlgorithm")
         assertEquals(ShredAlgorithm.Standard, invalid)
+    }
+
+    @Test
+    fun testFreeSpaceProgress_clampsAtNinetyNineUntilCleanup() {
+        val p0 = ShredderEngine.computeFreeSpaceWipeProgress(0L, 100L)
+        val pMid = ShredderEngine.computeFreeSpaceWipeProgress(50L, 100L)
+        val pOver = ShredderEngine.computeFreeSpaceWipeProgress(200L, 100L)
+
+        assertEquals(0f, p0, 0.0001f)
+        assertEquals(0.5f, pMid, 0.0001f)
+        assertEquals(0.99f, pOver, 0.0001f)
+    }
+
+    @Test
+    fun testFreeSpaceWipe_cancelTransitionsToCancelled() {
+        val storageRoot = tempFolder.newFolder("free_space_root")
+        val sessionId = ShredderEngine.newSessionId()
+        val latch = CountDownLatch(1)
+        var finalResult: FreeSpaceWipeResult? = null
+
+        ShredderEngine.wipeFreeSpaceSafely(storageRoot, sessionId) { result ->
+            finalResult = result
+            latch.countDown()
+        }
+
+        // Cooperative cancellation should be accepted for an active session.
+        assertTrue(ShredderEngine.requestCancelFreeSpaceWipe(sessionId))
+
+        if (!latch.await(20, TimeUnit.SECONDS)) {
+            fail("Timed out waiting for free-space wipe cancellation result")
+        }
+
+        assertTrue(finalResult is FreeSpaceWipeResult.Cancelled)
+        val state = ShredderEngine.freeSpaceWipeStateFlow.value
+        assertEquals(FreeSpaceWipeStatus.CANCELLED, state.status)
     }
 }
