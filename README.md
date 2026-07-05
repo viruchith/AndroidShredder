@@ -36,7 +36,7 @@ Unlike old magnetic platters where bits were directly overwritten on physical tr
 3.  **Over-Provisioning**: Storage chips maintain hidden sectors for bad block replacement. Sensitive data might reside in these hidden sectors, unreachable by standard file-system APIs.
 
 ### How Shredder Mitigates This
-*   **Free Space Wiper**: Because individual file overwriting can leave orphaned "dirty" blocks in free space, Shredder provides a **Free Space Wiper**. This creates a continuous stream of random files filling the storage partition to its limits (triggering `ENOSPC`). This forces the FTL to garbage-collect and overwrite all unallocated blocks, neutralizing leaked data fragments.
+*   **Free Space Wiper**: Because individual file overwriting can leave orphaned "dirty" blocks in free space, Shredder provides a **Free Space Wiper**. This creates a continuous stream of temporary wipe chunks and fills the storage partition to its limits (triggering `ENOSPC`). The chunk content follows the selected algorithm's first pass profile (commonly random entropy). This pushes the FTL to garbage-collect and rewrite unallocated blocks, reducing residual recovery surface.
 *   **Hardware Encryption**: Modern Android devices use File-Based Encryption (FBE). For absolute secure deletion of the entire chip, the **Nuclear Option (Factory Reset)** discards the device's master encryption keys, rendering all physical flash sectors permanently unreadable instant-by-instant.
 
 ---
@@ -59,6 +59,7 @@ Unlike old magnetic platters where bits were directly overwritten on physical tr
 *   **Real-time Log Console**: Fully collapsible and memory-sanitized console in the UI. Absolute file paths are never printed to system `logcat` to avoid metadata leakage.
 *   **Foreground Service Execution**: Runs shredding operations in a Foreground Service to prevent the OS from killing the process during intensive disk operations.
 *   **Free Space Wipe Only (Settings)**: Dedicated operation that writes temporary wipe chunks only inside the app cache path, with live progress, cancel support, and cleanup guarantees.
+*   **Keep-Awake Reliability**: While destructive operations run, the app keeps the screen awake in-app and holds a service-level partial WakeLock to reduce pause/throttle risk when the device idles.
 
 ---
 
@@ -99,6 +100,7 @@ A dedicated **Settings Screen** is accessible from the top toolbar's gear button
 *   **`MANAGE_EXTERNAL_STORAGE` (All Files Access)**: Required on Android 11+ to browse and securely shred user-selected files on shared storage.
 *   **`WRITE_EXTERNAL_STORAGE`**: Legacy permission required on Android 10 and lower.
 *   **`POST_NOTIFICATIONS`**: Required on Android 13+ to display the ongoing shredding progress notification.
+*   **`WAKE_LOCK`**: Required so the foreground service can hold a `PARTIAL_WAKE_LOCK` during long-running shredding and wipe operations.
 *   **Device Administrator (`DevicePolicyManager`)**: Required to obtain privileges for the `wipeData(0)` API to execute the Nuclear Option.
 
 ---
@@ -133,8 +135,9 @@ On start, the app will request the necessary storage permissions.
 4.  Track progress in-app and in notification; use **Cancel Wipe** (or notification cancel action) to stop safely.
 
 Safety guarantees for this mode:
-*   Wipe artifacts are created only under `Android/data/<package>/cache/free_space_wipe/<sessionId>/`.
-*   Cleanup never enumerates or deletes outside this directory (canonical path-guarded).
+*   Wipe artifacts are created only under the app external cache wipe directory (for example `Android/data/<package>/cache/free_space_wipe/<sessionId>/`).
+*   Cleanup never enumerates or deletes outside this wipe directory (canonical path-guarded).
+*   Temporary wipe files are securely cleaned (rename -> truncate to `0` -> `fd.sync()` -> delete).
 *   This mode is independent from Nuclear Option and never calls `DevicePolicyManager.wipeData()`.
 
 ---
@@ -150,6 +153,9 @@ Safety guarantees for this mode:
 
 ## 🆕 What's New (v1.3)
 
+*   **Operational Keep-Awake Hardening**: Added in-app `FLAG_KEEP_SCREEN_ON` during active destructive operations and a service-level `PARTIAL_WAKE_LOCK` lifecycle for long-running tasks.
+*   **Secure Temp Wipe Cleanup**: Free-space wipe and legacy free-space teardown now securely clean temporary wipe artifacts using metadata-minimizing deletion flow.
+*   **Improved Free Space Wipe Telemetry**: Added dedicated free-space status/progress messaging for writing, cleanup, completion, cancellation, and failure states.
 *   **Configurable Overwrite Algorithms**: Choose from Fast (1-pass), Standard (3-pass), DoD 5220.22-M (7-pass), Bruce Schneier (7-pass), and Peter Gutmann (35-pass) algorithms.
 *   **Hardened Danger Zone in Settings**: Removed the highly destructive "Nuclear Option" and "Device Admin" buttons from the main screen's top app bar to prevent accidental triggers. They are now cleanly isolated within a dedicated, red-bordered "Danger Zone" card at the bottom of the Settings screen.
 *   **State-Preserving Navigation**: Replaced inline screen-switching logic with a unified, type-safe `AppScreen` enum-driven state. This guarantees that your current directory level, file selections, and search/sort queries survive transitions to the Settings or About screens and back.
