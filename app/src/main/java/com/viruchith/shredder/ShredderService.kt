@@ -58,6 +58,7 @@ class ShredderService : Service() {
         }
 
         val files = intent?.getSerializableExtra("files") as? ArrayList<File>
+        val validatedFiles = files?.filter { it.exists() }?.let { ArrayList(it) }
         val fullWipe = intent?.getBooleanExtra("fullWipe", false) ?: false
         val mode = intent?.getStringExtra(FreeSpaceWipeContract.EXTRA_MODE)
         val sessionId = intent?.getStringExtra(FreeSpaceWipeContract.EXTRA_SESSION_ID)
@@ -137,11 +138,13 @@ class ShredderService : Service() {
 
         if (fullWipe) {
             // High-risk path: Wipe entire storage and factory reset.
+            // NOTE: Biometric authentication is required BEFORE sending this intent.
+            // The dual-layered confirmation (typed "NUCLEAR WIPE" + biometric) happens
+            // in the UI layer before this service is ever started with fullWipe=true.
             Thread {
                 ShredderEngine.wipeFreeSpace(Environment.getExternalStorageDirectory())
                 val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
                 try {
-                    // This call triggers a factory reset. Requires Device Admin permission.
                     dpm.wipeData(0)
                 } catch (e: SecurityException) {
                     updateNotification(createNotification("Failed: Device Admin not enabled."))
@@ -149,9 +152,9 @@ class ShredderService : Service() {
                 releaseWakeLock()
                 stopSelf()
             }.start()
-        } else if (files != null) {
+        } else if (validatedFiles != null && validatedFiles.isNotEmpty()) {
             // Standard path: Shred specific user-selected files.
-            ShredderEngine.shredFiles(files) {
+            ShredderEngine.shredFiles(validatedFiles) {
                 releaseWakeLock()
                 stopSelf()
             }
@@ -185,8 +188,8 @@ class ShredderService : Service() {
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
             }
-        } catch (_: Exception) {
-            // Ignore already-released lock edge cases.
+        } catch (e: Exception) {
+            android.util.Log.w("ShredderService", "WakeLock release failed", e)
         } finally {
             wakeLock = null
         }
@@ -205,10 +208,18 @@ class ShredderService : Service() {
     }
 
     private fun createNotification(content: String): Notification {
+        val contentIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingContentIntent = PendingIntent.getActivity(
+            this, 0, contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Secure Shredder")
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_menu_delete)
+            .setContentIntent(pendingContentIntent)
             .build()
     }
 
@@ -265,11 +276,19 @@ class ShredderService : Service() {
         sessionId: String,
         includeCancelAction: Boolean
     ): Notification {
+        val contentIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingContentIntent = PendingIntent.getActivity(
+            this, 0, contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text ?: "")
             .setSmallIcon(android.R.drawable.ic_menu_delete)
             .setOnlyAlertOnce(true)
+            .setContentIntent(pendingContentIntent)
 
         if (includeCancelAction) {
             val cancelIntent = Intent(this, ShredderService::class.java).apply {
