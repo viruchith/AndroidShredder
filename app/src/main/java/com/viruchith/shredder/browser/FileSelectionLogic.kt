@@ -5,6 +5,7 @@ import java.io.File
 /**
  * FileSelectionLogic isolates file-selection and state mutation rules
  * from Jetpack Compose UI state management.
+ * Uses Set-based lookups internally for O(1) containment checks.
  */
 object FileSelectionLogic {
 
@@ -12,7 +13,8 @@ object FileSelectionLogic {
      * Toggles a file's selection state within a list of selected files.
      */
     fun toggleSelection(selectedFiles: List<File>, file: File): List<File> {
-        return if (selectedFiles.contains(file)) {
+        val selectedSet = selectedFiles.toHashSet()
+        return if (selectedSet.contains(file)) {
             selectedFiles.filter { it != file }
         } else {
             selectedFiles + file
@@ -23,9 +25,10 @@ object FileSelectionLogic {
      * Selects all current files, adding them to the selected list if not already present.
      */
     fun selectAll(selectedFiles: List<File>, currentFiles: List<File>): List<File> {
+        val selectedSet = selectedFiles.toHashSet()
         val mutable = selectedFiles.toMutableList()
         currentFiles.forEach { file ->
-            if (!mutable.contains(file)) {
+            if (selectedSet.add(file)) {
                 mutable.add(file)
             }
         }
@@ -36,7 +39,8 @@ object FileSelectionLogic {
      * Deselects all files present in the current view from the selected list.
      */
     fun deselectAll(selectedFiles: List<File>, currentFiles: List<File>): List<File> {
-        return selectedFiles.filter { !currentFiles.contains(it) }
+        val currentSet = currentFiles.toHashSet()
+        return selectedFiles.filter { !currentSet.contains(it) }
     }
 
     /**
@@ -44,6 +48,7 @@ object FileSelectionLogic {
      */
     fun isAllSelected(selectedFiles: List<File>, currentFiles: List<File>): Boolean {
         if (currentFiles.isEmpty()) return false
-        return currentFiles.all { selectedFiles.contains(it) }
+        val selectedSet = selectedFiles.toHashSet()
+        return currentFiles.all { selectedSet.contains(it) }
     }
 }

@@ -9,8 +9,8 @@ import java.io.RandomAccessFile
 import java.security.SecureRandom
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -25,19 +25,29 @@ import kotlin.math.pow
 object ShredderEngine {
     private const val TAG = "ShredderEngine"
 
+    // Buffer size for overwrite operations (1 MB)
+    private const val SHRED_BUFFER_BYTES = 1024 * 1024
+
+    // Maximum console log entries retained in memory
+    private const val MAX_CONSOLE_LOG_ENTRIES = 200
+
+    // Maximum files queued for parallel shredding
+    private const val MAX_SHRED_QUEUE_SIZE = 1024
+
     // SecureRandom is used for cryptographic-strength entropy in random passes.
     private val random = SecureRandom()
 
     /**
      * ThreadPoolExecutor manages parallel shredding of multiple files.
-     * Core pool size is based on available processors to maximize I/O throughput 
-     * without overwhelming the system's disk scheduler.
+     * Uses a bounded queue to prevent OOM when shredding large file lists.
+     * CallerRunsPolicy ensures no tasks are silently dropped.
      */
     private val executor = ThreadPoolExecutor(
         Runtime.getRuntime().availableProcessors(),
         Runtime.getRuntime().availableProcessors(),
         60L, TimeUnit.SECONDS,
-        LinkedBlockingQueue()
+        ArrayBlockingQueue(MAX_SHRED_QUEUE_SIZE),
+        ThreadPoolExecutor.CallerRunsPolicy()
     )
 
     // State flows for real-time UI updates.
@@ -96,13 +106,17 @@ object ShredderEngine {
             return
         }
 
+        // Snapshot the algorithm at session start to prevent race conditions
+        // if the user changes settings mid-shred.
+        val sessionAlgorithm = currentAlgorithm
+
         val totalSize = calculateTotalSize(files)
         totalBytesToShred.set(totalSize)
         shreddedBytes.set(0L)
         progressFlow.value = 0f
         currentPassFlow.value = "Preparing..."
         addConsoleLog(
-            "[Started Session] Algorithm: ${currentAlgorithm.name} | Total size: ${
+            "[Started Session] Algorithm: ${sessionAlgorithm.name} | Total size: ${
                 formatSize(
                     totalSize
                 )
@@ -118,9 +132,9 @@ object ShredderEngine {
         files.forEach { file ->
             executor.execute {
                 try {
-                    recursiveShred(file, mutableSetOf())
+                    recursiveShred(file, mutableSetOf(), sessionAlgorithm)
                 } finally {
-                    checkCompletion(onComplete)
+                    checkCompletion(onComplete, sessionAlgorithm)
                 }
             }
         }
@@ -130,7 +144,7 @@ object ShredderEngine {
      * Checks if all queued and active tasks in the executor have completed.
      * Increments refreshTrigger to signal the UI to refresh the file list.
      */
-    private fun checkCompletion(onComplete: () -> Unit) {
+    private fun checkCompletion(onComplete: () -> Unit, algorithm: ShredAlgorithm) {
         if (executor.activeCount <= 1 && executor.queue.isEmpty()) {
             progressFlow.value = 1.0f
             currentPassFlow.value = ""
@@ -406,9 +420,11 @@ object ShredderEngine {
     private fun addConsoleLog(message: String) {
         val currentLogs = consoleLogFlow.value.toMutableList()
         currentLogs.add(message)
-        // Keep only the last 200 entries to prevent memory bloat.
-        if (currentLogs.size > 200) currentLogs.removeAt(0)
-        consoleLogFlow.value = currentLogs
+        if (currentLogs.size > MAX_CONSOLE_LOG_ENTRIES) {
+            consoleLogFlow.value = currentLogs.drop(currentLogs.size - MAX_CONSOLE_LOG_ENTRIES)
+        } else {
+            consoleLogFlow.value = currentLogs
+        }
     }
 
     /**
@@ -468,7 +484,7 @@ object ShredderEngine {
      * Handles directory structures by shredding files first, then deleting folders.
      * Uses a canonical path visited tracking set to prevent infinite loops from symlinks.
      */
-    private fun recursiveShred(file: File, visited: MutableSet<String>) {
+    private fun recursiveShred(file: File, visited: MutableSet<String>, algorithm: ShredAlgorithm) {
         try {
             if (!file.exists()) {
                 addConsoleLog("[Warning] Skipping non-existent file/folder: ${file.name}")
@@ -487,12 +503,12 @@ object ShredderEngine {
                     addConsoleLog("[Error] Directory unreadable or access denied: ${file.name}")
                     return
                 }
-                children.forEach { recursiveShred(it, visited) }
+                children.forEach { recursiveShred(it, visited, algorithm) }
                 if (!file.delete()) {
                     addConsoleLog("[Error] Failed to delete directory: ${file.name}")
                 }
             } else {
-                secureShred(file)
+                secureShred(file, algorithm)
             }
         } catch (e: Exception) {
             addConsoleLog("[Failed] Error shredding ${file.name}: ${e.message}")
@@ -503,13 +519,12 @@ object ShredderEngine {
      * Implements the secure shredding algorithm sequence of the active algorithm:
      * Overwrites, renames to a random string, and truncates to zero length.
      */
-    private fun secureShred(file: File) {
+    private fun secureShred(file: File, algorithm: ShredAlgorithm) {
         val fileName = file.name
         val length = file.length()
         addConsoleLog("[Started] $fileName")
 
-        val algo = currentAlgorithm
-        val totalPasses = algo.passes.size
+        val totalPasses = algorithm.passes.size
         var currentPassIndex = 0
 
         try {
@@ -521,17 +536,17 @@ object ShredderEngine {
                  * actually flushed to physical storage.
                  */
                 RandomAccessFile(file, "rw").use { raf ->
-                    algo.passes.forEachIndexed { index, pass ->
+                    algorithm.passes.forEachIndexed { index, pass ->
                         currentPassIndex = index
                         val passIndex = index + 1
                         currentPassFlow.value = "Pass $passIndex of $totalPasses (${pass.label})"
                         addConsoleLog("[Pass $passIndex/$totalPasses | ${pass.label}] $fileName")
-                        performPass(raf, length, pass)
+                        performPass(raf, length, pass, algorithm)
                         raf.fd.sync()
                     }
                 }
             } else {
-                updateProgress(0)
+                updateProgress(0, algorithm)
             }
 
             // Metadata Wiping: Rename to random string to hide original file name.
@@ -555,7 +570,7 @@ object ShredderEngine {
             addConsoleLog("[Failed] $fileName: ${e.message}")
             // Compensate progress on failure so the progress bar reaches 100%.
             val remaining = (length * totalPasses) - (length * currentPassIndex)
-            updateProgress(maxOf(0, remaining))
+            updateProgress(maxOf(0, remaining), algorithm)
             if (!file.delete()) file.deleteOnExit()
         }
     }
@@ -564,9 +579,9 @@ object ShredderEngine {
      * Overwrites the file content with the specified pattern or random data.
      * Uses a 1MB buffer to optimize throughput for large files.
      */
-    private fun performPass(raf: RandomAccessFile, length: Long, pass: ShredPass) {
+    private fun performPass(raf: RandomAccessFile, length: Long, pass: ShredPass, algorithm: ShredAlgorithm) {
         raf.seek(0)
-        val buffer = ByteArray(1024 * 1024)
+        val buffer = ByteArray(SHRED_BUFFER_BYTES)
         var written = 0L
         while (written < length) {
             val toWrite = minOf(buffer.size.toLong(), length - written).toInt()
@@ -586,13 +601,13 @@ object ShredderEngine {
                 is PassType.PATTERN -> {
                     val patternBytes = type.bytes
                     for (i in 0 until toWrite) {
-                        buffer[i] = patternBytes[(written + i).toInt() % patternBytes.size]
+                        buffer[i] = patternBytes[((written + i) % patternBytes.size).toInt()]
                     }
                 }
             }
             raf.write(buffer, 0, toWrite)
             written += toWrite
-            updateProgress(toWrite.toLong())
+            updateProgress(toWrite.toLong(), algorithm)
         }
     }
 
@@ -705,8 +720,11 @@ object ShredderEngine {
     private fun addFreeSpaceWipeLog(message: String) {
         val currentLogs = freeSpaceWipeLogFlow.value.toMutableList()
         currentLogs.add(message)
-        if (currentLogs.size > 200) currentLogs.removeAt(0)
-        freeSpaceWipeLogFlow.value = currentLogs
+        if (currentLogs.size > MAX_CONSOLE_LOG_ENTRIES) {
+            freeSpaceWipeLogFlow.value = currentLogs.drop(currentLogs.size - MAX_CONSOLE_LOG_ENTRIES)
+        } else {
+            freeSpaceWipeLogFlow.value = currentLogs
+        }
     }
 
     private fun updateFreeSpaceState(
@@ -747,12 +765,13 @@ object ShredderEngine {
         }
     }
 
-    private fun updateProgress(bytes: Long) {
+    private fun updateProgress(bytes: Long, algorithm: ShredAlgorithm) {
         val currentShredded = shreddedBytes.addAndGet(bytes)
         val total = totalBytesToShred.get()
         if (total > 0) {
-            val totalPasses = currentAlgorithm.passes.size
-            progressFlow.value = minOf(1.0f, currentShredded.toFloat() / (total * totalPasses))
+            val totalPasses = algorithm.passes.size
+            // Use toDouble() to prevent Long overflow for large files with many passes
+            progressFlow.value = minOf(1.0f, (currentShredded.toDouble() / (total.toDouble() * totalPasses)).toFloat())
         }
     }
 
@@ -770,7 +789,7 @@ object ShredderEngine {
                 "Random entropy"
             )
             RandomAccessFile(wipeFile, "rw").use { raf ->
-                val buffer = ByteArray(1024 * 1024)
+                val buffer = ByteArray(SHRED_BUFFER_BYTES)
                 while (true) {
                     when (val type = firstPass.type) {
                         is PassType.RANDOM -> {

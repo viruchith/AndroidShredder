@@ -58,6 +58,7 @@ class ShredderService : Service() {
         }
 
         val files = intent?.getSerializableExtra("files") as? ArrayList<File>
+        val validatedFiles = files?.filter { it.exists() }?.let { ArrayList(it) }
         val fullWipe = intent?.getBooleanExtra("fullWipe", false) ?: false
         val mode = intent?.getStringExtra(FreeSpaceWipeContract.EXTRA_MODE)
         val sessionId = intent?.getStringExtra(FreeSpaceWipeContract.EXTRA_SESSION_ID)
@@ -137,11 +138,13 @@ class ShredderService : Service() {
 
         if (fullWipe) {
             // High-risk path: Wipe entire storage and factory reset.
+            // NOTE: Biometric authentication is required BEFORE sending this intent.
+            // The dual-layered confirmation (typed "NUCLEAR WIPE" + biometric) happens
+            // in the UI layer before this service is ever started with fullWipe=true.
             Thread {
                 ShredderEngine.wipeFreeSpace(Environment.getExternalStorageDirectory())
                 val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
                 try {
-                    // This call triggers a factory reset. Requires Device Admin permission.
                     dpm.wipeData(0)
                 } catch (e: SecurityException) {
                     updateNotification(createNotification("Failed: Device Admin not enabled."))
@@ -149,9 +152,9 @@ class ShredderService : Service() {
                 releaseWakeLock()
                 stopSelf()
             }.start()
-        } else if (files != null) {
+        } else if (validatedFiles != null && validatedFiles.isNotEmpty()) {
             // Standard path: Shred specific user-selected files.
-            ShredderEngine.shredFiles(files) {
+            ShredderEngine.shredFiles(validatedFiles) {
                 releaseWakeLock()
                 stopSelf()
             }
@@ -185,8 +188,8 @@ class ShredderService : Service() {
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
             }
-        } catch (_: Exception) {
-            // Ignore already-released lock edge cases.
+        } catch (e: Exception) {
+            android.util.Log.w("ShredderService", "WakeLock release failed", e)
         } finally {
             wakeLock = null
         }
