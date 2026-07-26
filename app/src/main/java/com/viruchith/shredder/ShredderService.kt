@@ -208,10 +208,18 @@ class ShredderService : Service() {
     }
 
     private fun createNotification(content: String): Notification {
+        val contentIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingContentIntent = PendingIntent.getActivity(
+            this, 0, contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Secure Shredder")
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_menu_delete)
+            .setContentIntent(pendingContentIntent)
             .build()
     }
 
@@ -268,11 +276,19 @@ class ShredderService : Service() {
         sessionId: String,
         includeCancelAction: Boolean
     ): Notification {
+        val contentIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingContentIntent = PendingIntent.getActivity(
+            this, 0, contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text ?: "")
             .setSmallIcon(android.R.drawable.ic_menu_delete)
             .setOnlyAlertOnce(true)
+            .setContentIntent(pendingContentIntent)
 
         if (includeCancelAction) {
             val cancelIntent = Intent(this, ShredderService::class.java).apply {
