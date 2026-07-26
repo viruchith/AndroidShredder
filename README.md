@@ -1,6 +1,6 @@
 # Shredder - Secure File Deletion & Device Wiper for Android
 
-[![Version](https://img.shields.io/badge/Version-1.3-blue.svg)](https://github.com/viruchith/shredder/releases)
+[![Version](https://img.shields.io/badge/Version-1.4-blue.svg)](https://github.com/viruchith/shredder/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
 [![Min SDK](https://img.shields.io/badge/Min%20SDK-24%20(Android%207.0)-blue.svg)](https://developer.android.com/studio/releases/platforms)
@@ -148,6 +148,21 @@ Safety guarantees for this mode:
 *   **Language**: Kotlin 2.2.10
 *   **UI Framework**: Jetpack Compose
 *   **Build System**: Gradle Kotlin DSL (`.kts`)
+
+---
+
+## 🆕 What's New (v1.4)
+
+*   **Critical Integer Overflow Fix**: Pattern-based overwrite passes now correctly handle files larger than 2 GB, ensuring full shred integrity on large files.
+*   **Thread-Safe Algorithm Snapshots**: The selected shredding algorithm is now captured at session start, preventing race conditions if settings are changed mid-operation.
+*   **Bounded Thread Pool**: Replaced the unbounded work queue with a capacity-limited queue (`ArrayBlockingQueue`) and `CallerRunsPolicy` to prevent out-of-memory crashes when shredding thousands of files.
+*   **Progress Overflow Prevention**: Progress calculations use `Double` arithmetic to prevent `Long` overflow on very large file sets with many passes.
+*   **Expanded Path Protection**: `DestructiveOrchestrator` now guards additional system directories (`/system`, `/vendor`, `/data`, `/proc`, `/dev`, `/sys`) and top-level user media folders (DCIM, Download, Pictures, Documents, Music, Movies).
+*   **O(1) File Selection Performance**: Selection logic uses `HashSet`-backed containment checks, eliminating quadratic performance on large file lists.
+*   **Explicit PendingIntents (Security)**: All foreground service notifications now use explicit `PendingIntent` targets with `FLAG_IMMUTABLE`, resolving CodeQL SAST findings.
+*   **GitHub Actions CI Pipeline**: Added automated code quality (Lint), build validation, unit testing, and CodeQL SAST analysis on every push and pull request.
+*   **File Path Validation**: Service-layer file deserialization now validates that paths still exist before shredding, preventing stale-reference errors.
+*   **Named Constants**: Extracted magic numbers (`SHRED_BUFFER_BYTES`, `MAX_CONSOLE_LOG_ENTRIES`, `MAX_SHRED_QUEUE_SIZE`) for improved readability and maintainability.
 
 ---
 

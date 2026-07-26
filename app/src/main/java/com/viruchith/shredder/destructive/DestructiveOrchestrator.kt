@@ -16,11 +16,37 @@ object DestructiveOrchestrator {
         try {
             paths.add(Environment.getExternalStorageDirectory().canonicalPath.lowercase())
             paths.add(Environment.getExternalStorageDirectory().absolutePath.lowercase())
-        } catch (e: Exception) {
+        } catch (_: Exception) {
         }
         paths.add("/")
+        paths.add("/system")
+        paths.add("/vendor")
+        paths.add("/data")
+        paths.add("/data/system")
+        paths.add("/proc")
+        paths.add("/dev")
+        paths.add("/sys")
         paths
     }
+
+    // Suffixes of paths that should never be shredded (case-insensitive)
+    private val protectedSuffixes = listOf(
+        "/android",
+        "/android/data",
+        "/android/obb",
+        "/android/media"
+    )
+
+    // Well-known user data directories that warrant extra caution
+    private val highRiskUserDirs = listOf(
+        "/dcim",
+        "/download",
+        "/downloads",
+        "/pictures",
+        "/documents",
+        "/music",
+        "/movies"
+    )
 
     /**
      * Checks if a specific file path is considered "high risk" to shred (like the root of storage).
@@ -29,12 +55,23 @@ object DestructiveOrchestrator {
         return try {
             val canonical = file.canonicalPath.lowercase()
             criticalPaths.any { canonical == it } ||
-                    canonical.endsWith("/android") ||
-                    canonical.endsWith("/android/data") ||
-                    canonical.endsWith("/android/obb")
-        } catch (e: Exception) {
+                    protectedSuffixes.any { canonical.endsWith(it) } ||
+                    isTopLevelUserDir(canonical)
+        } catch (_: Exception) {
             true // Treat errors as high risk defensively
         }
+    }
+
+    /**
+     * Checks if the path is a top-level user media directory (e.g. /storage/emulated/0/DCIM).
+     */
+    private fun isTopLevelUserDir(canonicalLower: String): Boolean {
+        val storageRoot = try {
+            Environment.getExternalStorageDirectory().canonicalPath.lowercase()
+        } catch (_: Exception) {
+            return false
+        }
+        return highRiskUserDirs.any { canonicalLower == storageRoot + it }
     }
 
     /**
