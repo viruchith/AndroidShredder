@@ -77,6 +77,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.SpanStyle
@@ -133,9 +136,25 @@ class MainActivity : FragmentActivity() {
     fun MainScreen() {
         val context = LocalContext.current
         val securityGating = remember { SecurityGating() }
+        val orchestrator = remember { PermissionOrchestrator(context) }
 
         // Enforce strong device lock screen security posture.
         var isDeviceSecure by remember { mutableStateOf(securityGating.isDeviceSecure(context)) }
+        var permissionGranted by remember { mutableStateOf(orchestrator.hasAllPermissions()) }
+
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    isDeviceSecure = securityGating.isDeviceSecure(context)
+                    permissionGranted = orchestrator.hasAllPermissions()
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+            }
+        }
 
         if (!isDeviceSecure) {
             UnsecuredDeviceScreen(onRetry = {
@@ -201,10 +220,6 @@ class MainActivity : FragmentActivity() {
             fileListKey++
         }
 
-        // Permission handling orchestrator.
-        val orchestrator = remember { PermissionOrchestrator(context) }
-        var permissionGranted by remember { mutableStateOf(orchestrator.hasAllPermissions()) }
-
         val storagePermissionLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.StartActivityForResult()
         ) {
@@ -218,7 +233,7 @@ class MainActivity : FragmentActivity() {
         }
 
         val legacyStoragePermissionLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestPermission()
+            ActivityResultContracts.RequestMultiplePermissions()
         ) { _ ->
             permissionGranted = orchestrator.hasAllPermissions()
         }
@@ -275,7 +290,12 @@ class MainActivity : FragmentActivity() {
                                 intent.data = "package:${context.packageName}".toUri()
                                 storagePermissionLauncher.launch(intent)
                             } else {
-                                legacyStoragePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                legacyStoragePermissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.READ_EXTERNAL_STORAGE,
+                                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                                    )
+                                )
                             }
                         }
                     } else {
@@ -790,9 +810,9 @@ class MainActivity : FragmentActivity() {
         val context = LocalContext.current
         val appVersion = remember(context) {
             try {
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "-"
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.5"
             } catch (_: Exception) {
-                "-"
+                "1.5"
             }
         }
         val scrollState = rememberScrollState()

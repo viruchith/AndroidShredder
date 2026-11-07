@@ -28,5 +28,13 @@ class SecurityGatingInstrumentationTest {
         assertFalse(successCalled)
         assertTrue(errorCalled)
     }
+
+    @Test
+    fun isDeviceSecure_returnsBooleanWithoutCrashing() {
+        val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        val gating = SecurityGating()
+        val isSecure = gating.isDeviceSecure(context)
+        org.junit.Assert.assertNotNull(isSecure)
+    }
 }
 

@@ -1,5 +1,7 @@
 package com.viruchith.shredder.security
 
+import android.annotation.SuppressLint
+import android.app.KeyguardManager
 import android.content.Context
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
@@ -23,6 +25,9 @@ class SecurityGating(
         BiometricManager.from(
             it
         )
+    },
+    private val keyguardManagerProvider: (Context) -> KeyguardManager? = {
+        it.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
     }
 ) {
 
@@ -39,14 +44,25 @@ class SecurityGating(
      * Determines if the device currently has active screen locks or biometric credentials configured.
      */
     fun isDeviceSecure(context: Context): Boolean {
+        val keyguardManager = keyguardManagerProvider(context)
+        if (keyguardManager?.isDeviceSecure == true) {
+            return true
+        }
         val biometricManager = biometricManagerProvider(context)
-        val status = biometricManager.canAuthenticate(AUTHENTICATORS)
+        val authenticators = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            AUTHENTICATORS
+        } else {
+            BiometricManager.Authenticators.BIOMETRIC_WEAK
+        }
+        val status = biometricManager.canAuthenticate(authenticators)
         return status == BiometricManager.BIOMETRIC_SUCCESS || status == BiometricManager.BIOMETRIC_STATUS_UNKNOWN
     }
 
     /**
      * Triggers the Android BiometricPrompt flow for user authentication.
      */
+    @SuppressLint("BiometricPromptWithoutCrypto")
+    @Suppress("BiometricPromptWithoutCrypto")
     fun authenticate(
         activity: FragmentActivity,
         title: String,
@@ -54,14 +70,18 @@ class SecurityGating(
         onSuccess: () -> Unit,
         onError: (errorCode: Int, errString: String) -> Unit
     ) {
-        val cipher = try {
-            initCipherForAuthentication()
-        } catch (_: Exception) {
-            onError(
-                BiometricPrompt.ERROR_HW_UNAVAILABLE,
-                "Unable to initialize secure authentication key."
-            )
-            return
+        val biometricManager = biometricManagerProvider(activity)
+        val canUseCrypto = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+
+        val cipher = if (canUseCrypto) {
+            try {
+                initCipherForAuthentication()
+            } catch (_: Exception) {
+                null
+            }
+        } else {
+            null
         }
 
         val executor = ContextCompat.getMainExecutor(activity)
@@ -69,7 +89,11 @@ class SecurityGating(
             BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    verifyCryptoObject(result.cryptoObject, onSuccess, onError)
+                    if (cipher != null) {
+                        verifyCryptoObject(result.cryptoObject, onSuccess, onError)
+                    } else {
+                        onSuccess()
+                    }
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -78,13 +102,25 @@ class SecurityGating(
                 }
             })
 
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+        val promptInfoBuilder = BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
             .setSubtitle(subtitle)
-            .setAllowedAuthenticators(AUTHENTICATORS)
-            .build()
 
-        biometricPrompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            promptInfoBuilder.setAllowedAuthenticators(AUTHENTICATORS)
+        } else {
+            promptInfoBuilder.setAllowedAuthenticators(
+                BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+            )
+        }
+
+        val promptInfo = promptInfoBuilder.build()
+
+        if (cipher != null) {
+            biometricPrompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
+        } else {
+            biometricPrompt.authenticate(promptInfo)
+        }
     }
 
     internal fun verifyCryptoObject(
