@@ -151,6 +151,14 @@ Safety guarantees for this mode:
 
 ---
 
+## 🆕 What's New (v1.4.1)
+
+*   **Android 10 (API 29) Device Lock Compatibility**: Resolved an issue where Android 10 devices and emulators continued prompting to set up a screen lock even after setting a PIN, pattern, or password. Used `KeyguardManager.isDeviceSecure` for reliable credential detection on API 29 and below, where `BiometricManager.canAuthenticate(BIOMETRIC_STRONG | DEVICE_CREDENTIAL)` is unsupported.
+*   **API 29 Biometric & Credential Authentication Fix**: Configured `BiometricPrompt` on Android 10 to use supported authenticator parameters without unsupported `CryptoObject` bindings with device credentials, eliminating `IllegalArgumentException` and keystore initialization failures on devices without enrolled biometrics.
+*   **Automatic Screen Lock Re-check on Resume**: Integrated a lifecycle observer (`ON_RESUME`) in `MainActivity` to automatically re-evaluate device security status when returning from System Settings, removing the need to restart the app or manually tap "Retry Check".
+
+---
+
 ## 🆕 What's New (v1.4)
 
 *   **Critical Integer Overflow Fix**: Pattern-based overwrite passes now correctly handle files larger than 2 GB, ensuring full shred integrity on large files.
