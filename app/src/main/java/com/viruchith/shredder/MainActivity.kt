@@ -810,9 +810,9 @@ class MainActivity : FragmentActivity() {
         val context = LocalContext.current
         val appVersion = remember(context) {
             try {
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "-"
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.5"
             } catch (_: Exception) {
-                "-"
+                "1.5"
             }
         }
         val scrollState = rememberScrollState()

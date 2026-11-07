@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5] - 2026-11-07
+
 ### Fixed
 - **Android 10 (API 29) Device Lock Detection**: Resolved an issue where Android 10 devices and emulators continued prompting to set up a screen lock even after setting a PIN, pattern, or password. Switched to `KeyguardManager.isDeviceSecure` for credential detection on API 29 and below, where `BiometricManager.canAuthenticate(BIOMETRIC_STRONG | DEVICE_CREDENTIAL)` is unsupported and returns `BIOMETRIC_ERROR_UNSUPPORTED`.
 - **Android 10 Biometric & PIN Authentication**: Fixed `BiometricPrompt` authentication on Android 10 and devices without biometric hardware by avoiding unsupported `CryptoObject` bindings with device credentials (supported only on API 30+) and using supported authenticator configurations (`BIOMETRIC_WEAK | DEVICE_CREDENTIAL`).

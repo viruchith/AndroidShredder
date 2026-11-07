@@ -1,6 +1,6 @@
 # Shredder - Secure File Deletion & Device Wiper for Android
 
-[![Version](https://img.shields.io/badge/Version-1.4-blue.svg)](https://github.com/viruchith/shredder/releases)
+[![Version](https://img.shields.io/badge/Version-1.5-blue.svg)](https://github.com/viruchith/shredder/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
 [![Min SDK](https://img.shields.io/badge/Min%20SDK-24%20(Android%207.0)-blue.svg)](https://developer.android.com/studio/releases/platforms)
@@ -151,7 +151,7 @@ Safety guarantees for this mode:
 
 ---
 
-## 🆕 What's New (v1.4.1)
+## 🆕 What's New (v1.5)
 
 *   **Android 10 (API 29) Device Lock Compatibility**: Resolved an issue where Android 10 devices and emulators continued prompting to set up a screen lock even after setting a PIN, pattern, or password. Used `KeyguardManager.isDeviceSecure` for reliable credential detection on API 29 and below, where `BiometricManager.canAuthenticate(BIOMETRIC_STRONG | DEVICE_CREDENTIAL)` is unsupported.
 *   **Android 10 (API 29) File System & Directory Access**: Resolved an issue where the file explorer displayed no directories on Android 10 after granting storage permissions. Configured `android:requestLegacyExternalStorage="true"` in the application manifest to opt out of isolated scoped storage on API 29, and ensured both `READ_EXTERNAL_STORAGE` and `WRITE_EXTERNAL_STORAGE` are requested and verified.
