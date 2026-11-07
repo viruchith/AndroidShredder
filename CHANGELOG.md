@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Android 10 (API 29) Device Lock Detection**: Resolved an issue where Android 10 devices and emulators continued prompting to set up a screen lock even after setting a PIN, pattern, or password. Switched to `KeyguardManager.isDeviceSecure` for credential detection on API 29 and below, where `BiometricManager.canAuthenticate(BIOMETRIC_STRONG | DEVICE_CREDENTIAL)` is unsupported and returns `BIOMETRIC_ERROR_UNSUPPORTED`.
 - **Android 10 Biometric & PIN Authentication**: Fixed `BiometricPrompt` authentication on Android 10 and devices without biometric hardware by avoiding unsupported `CryptoObject` bindings with device credentials (supported only on API 30+) and using supported authenticator configurations (`BIOMETRIC_WEAK | DEVICE_CREDENTIAL`).
-- **Automatic Security Posture Re-check**: Added an `ON_RESUME` lifecycle observer in `MainActivity` to automatically re-evaluate screen lock status when returning from System Settings, removing the need to restart the app or manually tap "Retry Check".
+- **Android 10 (API 29) File System & Directory Access**: Fixed an issue where the file explorer displayed no directories or files on Android 10 even after granting storage permissions. Added `android:requestLegacyExternalStorage="true"` to `<application>` in `AndroidManifest.xml` to opt out of scoped storage isolation on Android 10 (where `MANAGE_EXTERNAL_STORAGE` is not available). Updated runtime permission requests and verification to ensure both `READ_EXTERNAL_STORAGE` and `WRITE_EXTERNAL_STORAGE` are requested and granted.
+- **Automatic Security & Permission Re-check**: Added an `ON_RESUME` lifecycle observer in `MainActivity` to automatically re-evaluate screen lock status and storage permissions when returning from System Settings, removing the need to restart the app or manually tap "Retry Check".
 
 ## [1.4] - 2026-07-05
 

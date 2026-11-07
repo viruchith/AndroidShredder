@@ -114,10 +114,11 @@ The app is built on a modern Android stack with a decoupled, state-driven Jetpac
     *   Added `FREE_SPACE_WIPE_ONLY` service mode and `CANCEL_FREE_SPACE_WIPE` action using `sessionId` routing.
     *   Added typed free-space result/state model (`Completed`, `Cancelled`, `Failed`) with progress semantics based on initial free-space estimate.
     *   Added safety-bound cleanup that deletes only app-created wipe artifacts under the session directory.
-7.  **Android 10 (API 29) Device Lock & Biometric Compatibility**:
+7.  **Android 10 (API 29) Compatibility (Device Lock & File System)**:
     *   Updated `SecurityGating.isDeviceSecure()` to leverage `KeyguardManager.isDeviceSecure` on API 29 and below where `BiometricManager.canAuthenticate(BIOMETRIC_STRONG | DEVICE_CREDENTIAL)` is unsupported.
+    *   Configured `android:requestLegacyExternalStorage="true"` in `AndroidManifest.xml` and updated runtime permission checks to require both `READ_EXTERNAL_STORAGE` and `WRITE_EXTERNAL_STORAGE`, enabling full directory listing on Android 10 without scoped storage blocking `File.listFiles()`.
     *   Handled Android 10 authentication through `BiometricPrompt` with `BIOMETRIC_WEAK | DEVICE_CREDENTIAL` and without unsupported `CryptoObject` bindings when strong biometrics are absent.
-    *   Added lifecycle `ON_RESUME` re-checking in `MainActivity` to automatically clear the unsecured barrier upon returning from System Settings.
+    *   Added lifecycle `ON_RESUME` re-checking in `MainActivity` to automatically clear the unsecured barrier and update permissions upon returning from System Settings.
 
 ---
 

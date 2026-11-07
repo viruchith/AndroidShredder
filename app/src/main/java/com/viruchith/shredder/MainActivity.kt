@@ -136,15 +136,18 @@ class MainActivity : FragmentActivity() {
     fun MainScreen() {
         val context = LocalContext.current
         val securityGating = remember { SecurityGating() }
+        val orchestrator = remember { PermissionOrchestrator(context) }
 
         // Enforce strong device lock screen security posture.
         var isDeviceSecure by remember { mutableStateOf(securityGating.isDeviceSecure(context)) }
+        var permissionGranted by remember { mutableStateOf(orchestrator.hasAllPermissions()) }
 
         val lifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_RESUME) {
                     isDeviceSecure = securityGating.isDeviceSecure(context)
+                    permissionGranted = orchestrator.hasAllPermissions()
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
@@ -217,10 +220,6 @@ class MainActivity : FragmentActivity() {
             fileListKey++
         }
 
-        // Permission handling orchestrator.
-        val orchestrator = remember { PermissionOrchestrator(context) }
-        var permissionGranted by remember { mutableStateOf(orchestrator.hasAllPermissions()) }
-
         val storagePermissionLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.StartActivityForResult()
         ) {
@@ -234,7 +233,7 @@ class MainActivity : FragmentActivity() {
         }
 
         val legacyStoragePermissionLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestPermission()
+            ActivityResultContracts.RequestMultiplePermissions()
         ) { _ ->
             permissionGranted = orchestrator.hasAllPermissions()
         }
@@ -291,7 +290,12 @@ class MainActivity : FragmentActivity() {
                                 intent.data = "package:${context.packageName}".toUri()
                                 storagePermissionLauncher.launch(intent)
                             } else {
-                                legacyStoragePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                legacyStoragePermissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.READ_EXTERNAL_STORAGE,
+                                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                                    )
+                                )
                             }
                         }
                     } else {
